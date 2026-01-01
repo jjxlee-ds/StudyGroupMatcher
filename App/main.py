@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from api import auth
 
 app = FastAPI(
     title = "Study Group Matcher API",

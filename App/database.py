@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SUPABASE_URL = os.getenv("https://tddbudcgoalnjnsaqtoo.supabase.co/")
-SUPABASE_KEY = os.getenv("sb_publishable_AvMzV3Ompyi11LXpu65-wg_hgo2P3lV")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def get_supabase() -> Client:
     "Supabase returns Client"

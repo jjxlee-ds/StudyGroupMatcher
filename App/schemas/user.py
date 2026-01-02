@@ -23,7 +23,7 @@ class Create_User(BaseModel):
     password: str
     major: str
     minor: Optional[str] = None
-    academic_year: int
+    academic_standing: int
     work_willingness: int
 
 class User_Response(BaseModel):
@@ -41,12 +41,13 @@ class User_Response(BaseModel):
     academic_year (Integer): year of study(1,2,3,4)
     work_willingness (Integer): How willing to study in the group int
     """
+    id: str
     name: str
     nyu_email : EmailStr
     nyu_id : str
     major: str
     minor: Optional[str] = None
-    academic_year: int
+    academic_standing: int
     work_willingness: int
 
 class Login_Request(BaseModel):

@@ -20,17 +20,20 @@ async def signup(user: Create_User):
             "email" : user.nyu_email,
             "password" : user.password
         })
+
         user_data = {
+            "id" : auth_response.user.id,
             "nyu_email" : user.nyu_email,
             "nyu_id" : user.nyu_id,
             "name" : user.name,
             "major" : user.major,
             "minor" : user.minor,
-            "academic_year" : user.academic_year,
+            "academic_standing" : user.academic_standing,
             "work_willingness": user.work_willingness
         }
-        result = supabase.table("users").insert(user_data).execute()
 
+        result = supabase.table("users").insert(user_data).execute()
+        
         if not result.data:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail= "Fail to save the user.")
         else:

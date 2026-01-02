@@ -6,6 +6,7 @@ app = FastAPI(
     title = "Study Group Matcher API",
     version = "1.0.0"
 )
+
 app.include_router(auth.router)
 
 app.add_middleware(

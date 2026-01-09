@@ -1,8 +1,15 @@
 from fastapi import APIRouter, HTTPException, status
-from schemas.user import Create_User, User_Response, Token_Response, Login_Request
+from schemas.user import User_Response
+from schemas.auth import Create_User, Token_Response, Login_Request
 from database import get_supabase
 
 router = APIRouter(prefix="/auth", tags = ["auth"])
+supabase = get_supabase()
+def normalize(s):
+    if s == None:
+        return None
+    return s.strip().lower()
+
 @router.post("/signup",response_model = User_Response)
 async def signup(user: Create_User):
     """
@@ -14,7 +21,6 @@ async def signup(user: Create_User):
 
     sinning up new user
     """
-    supabase = get_supabase()
     try:
         auth_response = supabase.auth.sign_up({
             "email" : user.nyu_email,
@@ -23,11 +29,11 @@ async def signup(user: Create_User):
 
         user_data = {
             "id" : auth_response.user.id,
-            "nyu_email" : user.nyu_email,
-            "nyu_id" : user.nyu_id,
-            "name" : user.name,
-            "major" : user.major,
-            "minor" : user.minor,
+            "nyu_email" : normalize(user.nyu_email),
+            "nyu_id" : normalize(user.nyu_id),
+            "name" : normalize(user.name),
+            "major" : normalize(user.major),
+            "minor" : normalize(user.minor),
             "academic_standing" : user.academic_standing,
             "work_willingness": user.work_willingness
         }
@@ -48,11 +54,10 @@ async def signup(user: Create_User):
     
 @router.post("/login",response_model = Token_Response)
 async def login(credentials: Login_Request):
-    supabase = get_supabase()
 
     try:
         auth_response = supabase.auth.sign_in_with_password({
-            "email" : credentials.nyu_email,
+            "email" : normalize(credentials.nyu_email),
             "password" :credentials.password})
 
         access_token = auth_response.session.access_token

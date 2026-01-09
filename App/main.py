@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api import auth
+from api import auth, course, user_course
 
 app = FastAPI(
     title = "Study Group Matcher API",
@@ -8,6 +8,8 @@ app = FastAPI(
 )
 
 app.include_router(auth.router)
+app.include_router(course.router)
+app.include_router(user_course.router)
 
 app.add_middleware(
     CORSMiddleware,

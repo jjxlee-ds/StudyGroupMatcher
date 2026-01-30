@@ -1,77 +1,114 @@
-from fastapi import APIRouter, HTTPException, status, Query
-from typing import List
-from schemas.course import Course_Response, Create_Course, Get_Course_Request
-from database import get_supabase
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import List, Optional
+from supabase import Client
 
-def normalize(s):
-    if s == None or not s.strip():
-        return None
-    return s.strip().replace(" ", "").upper()
+from database import get_supabase
+from schemas.course import CourseResponse, CourseCreate
+from api.utils import handle_supabase_errors, normalize_code
+
 
 router = APIRouter(prefix="/courses", tags=["courses"])
-supabase = get_supabase()
 
-@router.get("/", response_model=List[Course_Response])
-async def get_course():
 
-    try:
-        result = supabase.table("courses")\
-            .select("*")\
-            .execute()
-        
-        if not result.data:
-            return []
-        
-        return result.data  
-    
-    except Exception as e:
+@router.get("/", response_model=List[CourseResponse])
+@handle_supabase_errors
+async def get_all_courses(
+    supabase: Client = Depends(get_supabase)
+) -> List[CourseResponse]:
+    """Retrieve all available courses."""
+    result = supabase.table("courses").select("*").execute()
+    return result.data or []
+
+
+@router.get("/search", response_model=List[CourseResponse])
+@handle_supabase_errors
+async def search_courses(
+    course_code: str = Query(..., min_length=1, description="Course code to search"),
+    supabase: Client = Depends(get_supabase)
+) -> List[CourseResponse]:
+    """Search for courses by course code."""
+    normalized = normalize_code(course_code)
+    if not normalized:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch courses: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Course code cannot be empty"
         )
 
+    result = (
+        supabase.table("courses")
+        .select("*")
+        .eq("course_code", normalized)
+        .execute()
+    )
+    return result.data or []
 
-@router.get("/search", response_model=List[Course_Response])
-async def get_course_by_code(course_code: str = Query(..., description="Course code to search")):
-    try:
-        normalized = normalize(course_code)
-        result = supabase.table("courses")\
-            .select("*")\
-            .eq("course_code",normalized)\
-            .execute()
-        
-        if not result.data:
-            return []
-        
-        return result.data  
-    
-    except Exception as e:
+
+@router.get("/{course_id}", response_model=CourseResponse)
+@handle_supabase_errors
+async def get_course_by_id(
+    course_id: int,
+    supabase: Client = Depends(get_supabase)
+) -> CourseResponse:
+    """Retrieve a specific course by ID."""
+    result = (
+        supabase.table("courses")
+        .select("*")
+        .eq("id", course_id)
+        .single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Course with id {course_id} not found"
+        )
+    return result.data
+
+
+@router.post("/", response_model=CourseResponse, status_code=status.HTTP_201_CREATED)
+@handle_supabase_errors
+async def create_course(
+    request: CourseCreate,
+    supabase: Client = Depends(get_supabase)
+) -> CourseResponse:
+    """Create a new course."""
+    normalized_code = normalize_code(request.course_code)
+    normalized_name = normalize_code(request.course_name)
+
+    if not normalized_code or not normalized_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Course code and name are required"
+        )
+
+    # Check for duplicate course
+    existing = (
+        supabase.table("courses")
+        .select("id")
+        .eq("course_code", normalized_code)
+        .eq("course_section", request.course_section)
+        .execute()
+    )
+
+    if existing.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A course with this code and section already exists"
+        )
+
+    course_data = {
+        "course_code": normalized_code,
+        "course_name": normalized_name,
+        "course_section": request.course_section
+    }
+
+    result = supabase.table("courses").insert(course_data).execute()
+
+    if not result.data:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch courses: {str(e)}"
+            detail="Failed to create course"
         )
-    
-@router.post("/create", response_model=Course_Response)
-async def create_course(request: Create_Course):
 
-    try:
-        course_data = {
-            "course_code": normalize(request.course_code),
-            "course_name": normalize(request.course_name),
-            "course_section" : request.course_section
-        }
-
-        result = supabase.table("courses").insert(course_data).execute()
-
-        if not result.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                detail="Failed to save the course.")
-        else:
-            return result.data[0]  
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=str(e))
-    
+    return result.data[0]

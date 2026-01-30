@@ -1,26 +1,33 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-class Create_Course(BaseModel):
-    """
-    used to store new course data in schema
 
-    Attributes:
-    course_code (str): course code in nyu albert
-    course_name (Str) : name of the course 
-    """
-    course_code : str
-    course_name : str
-    course_section : int
+class CourseCreate(BaseModel):
+    """Schema for creating a new course."""
+    course_code: str = Field(..., min_length=1, description="Course code (e.g., CS-UY 1134)")
+    course_name: str = Field(..., min_length=1, description="Course name")
+    course_section: int = Field(..., ge=1, description="Section number")
 
-class Course_Response(BaseModel):
-    """
-    Used to response course data
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "course_code": "CS-UY 1134",
+                "course_name": "Data Structures and Algorithms",
+                "course_section": 1
+            }
+        }
 
-    Attributes:
-    course_code (str): course code in nyu albert
-    course_name (Str) : name of the course 
-    """
-    id : int
-    course_code : str
-    course_name : str
-    course_section : int
+
+class CourseResponse(BaseModel):
+    """Schema for course response."""
+    id: int
+    course_code: str
+    course_name: str
+    course_section: int
+
+    class Config:
+        from_attributes = True
+
+
+# Keep aliases for backward compatibility
+Create_Course = CourseCreate
+Course_Response = CourseResponse

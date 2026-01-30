@@ -1,12 +1,25 @@
-from supabase import create_client, Client
 import os
-from dotenv import load_dotenv
+from functools import lru_cache
 
-load_dotenv()
+from supabase import create_client, Client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+@lru_cache()
 def get_supabase() -> Client:
-    "Supabase returns Client"
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    """
+    Get Supabase client singleton.
+
+    Uses environment variables:
+        SUPABASE_URL: The Supabase project URL
+        SUPABASE_KEY: The Supabase anon/service key
+
+    Returns:
+        Client: Supabase client instance
+    """
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+
+    if not url or not key:
+        raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
+
+    return create_client(url, key)

@@ -1,80 +1,173 @@
-from fastapi import APIRouter, HTTPException, status
-from schemas.user import User_Response
-from schemas.auth import Create_User, Token_Response, Login_Request
+from fastapi import APIRouter, Depends, HTTPException, status
+from supabase import Client
+
 from database import get_supabase
+from dependencies import get_current_user
+from schemas.user import UserResponse
+from schemas.auth import (
+    UserCreate,
+    TokenResponse,
+    LoginRequest,
+    PasswordResetRequest,
+    PasswordResetConfirm,
+    RefreshTokenRequest
+)
+from api.user_service import (
+    get_user_by_email,
+    get_user_by_id,
+    check_user_exists_by_email,
+    check_user_exists_by_nyu_id,
+    create_user_in_db
+)
+from api.utils import handle_supabase_errors
 
-router = APIRouter(prefix="/auth", tags = ["auth"])
-supabase = get_supabase()
-def normalize(s):
-    if s == None:
-        return None
-    return s.strip().lower()
 
-@router.post("/signup",response_model = User_Response)
-async def signup(user: Create_User):
-    """
-    Docstring for signup
+router = APIRouter(prefix="/auth", tags=["auth"])
 
-    used to singup the user.
-    :param user: Description
-    :type user: Create_User
 
-    sinning up new user
-    """
-    try:
-        auth_response = supabase.auth.sign_up({
-            "email" : user.nyu_email,
-            "password" : user.password
-        })
-
-        user_data = {
-            "id" : auth_response.user.id,
-            "nyu_email" : normalize(user.nyu_email),
-            "nyu_id" : normalize(user.nyu_id),
-            "name" : normalize(user.name),
-            "major" : normalize(user.major),
-            "minor" : normalize(user.minor),
-            "academic_standing" : user.academic_standing,
-            "work_willingness": user.work_willingness
-        }
-
-        result = supabase.table("users").insert(user_data).execute()
-        
-        if not result.data:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail= "Fail to save the user.")
-        else:
-            return result.data[0]
-
-    except HTTPException:
-        raise
-    except Exception as e:
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@handle_supabase_errors
+async def signup(
+    user: UserCreate,
+    supabase: Client = Depends(get_supabase)
+) -> UserResponse:
+    """Register a new user account."""
+    if check_user_exists_by_email(supabase, user.nyu_email):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=str(e))
-    
-@router.post("/login",response_model = Token_Response)
-async def login(credentials: Login_Request):
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered"
+        )
+
+    if check_user_exists_by_nyu_id(supabase, user.nyu_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="NYU ID already registered"
+        )
+
+    auth_response = supabase.auth.sign_up({
+        "email": user.nyu_email,
+        "password": user.password
+    })
+
+    if not auth_response.user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to create auth user"
+        )
+
+    user_data = {
+        "id": auth_response.user.id,
+        "nyu_email": user.nyu_email,
+        "nyu_id": user.nyu_id,
+        "name": user.name,
+        "major": user.major,
+        "minor": user.minor,
+        "academic_standing": user.academic_standing,
+        "work_willingness": user.work_willingness
+    }
 
     try:
-        auth_response = supabase.auth.sign_in_with_password({
-            "email" : normalize(credentials.nyu_email),
-            "password" :credentials.password})
+        return create_user_in_db(supabase, user_data)
+    except HTTPException:
+        # Rollback: delete auth account if DB insert fails
+        supabase.auth.admin.delete_user(auth_response.user.id)
+        raise
 
-        access_token = auth_response.session.access_token
 
-        user_data = supabase.table("users")\
-            .select("*")\
-            .eq("nyu_email", credentials.nyu_email)\
-            .execute()
-        
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user": user_data.data[0]
-        }
-    
-    except Exception as e:
-         raise HTTPException(
+@router.post("/login", response_model=TokenResponse)
+@handle_supabase_errors
+async def login(
+    credentials: LoginRequest,
+    supabase: Client = Depends(get_supabase)
+) -> TokenResponse:
+    """Authenticate user and return access token."""
+    auth_response = supabase.auth.sign_in_with_password({
+        "email": credentials.nyu_email,
+        "password": credentials.password
+    })
+
+    if not auth_response.session:
+        raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
+
+    user_data = get_user_by_email(supabase, credentials.nyu_email)
+
+    return {
+        "access_token": auth_response.session.access_token,
+        "token_type": "bearer",
+        "user": user_data
+    }
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def logout(
+    _current_user: dict = Depends(get_current_user),  # Auth required
+    supabase: Client = Depends(get_supabase)
+):
+    """Log out the current user."""
+    supabase.auth.sign_out()
+    return {"message": "Successfully logged out"}
+
+
+@router.post("/refresh", response_model=TokenResponse)
+@handle_supabase_errors
+async def refresh_token(
+    refresh_request: RefreshTokenRequest,
+    supabase: Client = Depends(get_supabase)
+) -> TokenResponse:
+    """Refresh access token using refresh token."""
+    auth_response = supabase.auth.refresh_session(refresh_request.refresh_token)
+
+    if not auth_response.session or not auth_response.user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+
+    user_data = get_user_by_id(supabase, auth_response.user.id)
+
+    return {
+        "access_token": auth_response.session.access_token,
+        "token_type": "bearer",
+        "user": user_data
+    }
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def request_password_reset(
+    reset_request: PasswordResetRequest,
+    supabase: Client = Depends(get_supabase)
+):
+    """Send password reset email."""
+    supabase.auth.reset_password_email(reset_request.email)
+    # Always return success to prevent email enumeration
+    return {"message": "If the email exists, a reset link has been sent"}
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def confirm_password_reset(
+    reset_confirm: PasswordResetConfirm,
+    supabase: Client = Depends(get_supabase)
+):
+    """Confirm password reset with new password."""
+    supabase.auth.update_user({"password": reset_confirm.new_password})
+    return {"message": "Password updated successfully"}
+
+
+@router.get("/verify-email-status", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def check_email_verification(
+    _current_user: dict = Depends(get_current_user),  # Auth required
+    supabase: Client = Depends(get_supabase)
+):
+    """Check if user's email is verified."""
+    user = supabase.auth.get_user()
+    return {
+        "email_verified": user.user.email_confirmed_at is not None,
+        "email": user.user.email
+    }

@@ -14,8 +14,11 @@ class UserCreate(BaseModel):
     minor: Optional[str] = None
     academic_standing: int = Field(..., ge=1, le=4, description="Year in school (1-4)")
     work_willingness: int = Field(..., ge=1, le=10, description="Work willingness score (1-10)")
+    preferred_location: Optional[str] = None
+    time_preference: Optional[str] = None
+    gpa: Optional[float] = Field(None, ge=0.0, le=4.0, description="GPA (0.0-4.0)")
 
-    @field_validator('nyu_email', 'name', 'major', 'minor', 'nyu_id', mode='before')
+    @field_validator('nyu_email', 'name', 'major', 'minor', 'nyu_id', 'preferred_location', 'time_preference', mode='before')
     @classmethod
     def normalize_fields(cls, v):
         return normalize_string(v) if isinstance(v, str) else v
@@ -37,7 +40,10 @@ class UserCreate(BaseModel):
                 "major": "Computer Science",
                 "minor": "Mathematics",
                 "academic_standing": 2,
-                "work_willingness": 7
+                "work_willingness": 7,
+                "preferred_location": "Bobst Library",
+                "time_preference": "morning",
+                "gpa": 3.5
             }
         }
 

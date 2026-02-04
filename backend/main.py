@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import auth, course, user, user_course
+from api import auth, course, user, user_course, study_group
 
 
 app = FastAPI(
@@ -15,6 +15,7 @@ app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(course.router)
 app.include_router(user_course.router)
+app.include_router(study_group.router)
 
 # CORS middleware
 app.add_middleware(

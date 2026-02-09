@@ -16,7 +16,7 @@ class UserCreate(BaseModel):
     work_willingness: int = Field(..., ge=1, le=10, description="Work willingness score (1-10)")
     preferred_location: Optional[str] = None
     time_preference: Optional[str] = None
-    gpa: Optional[float] = Field(None, ge=0.0, le=4.0, description="GPA (0.0-4.0)")
+    avg_gpa: Optional[float] = Field(None, ge=0.0, le=4.0, description="GPA (0.0-4.0)")
 
     @field_validator('nyu_email', 'name', 'major', 'minor', 'nyu_id', 'preferred_location', 'time_preference', mode='before')
     @classmethod
@@ -43,7 +43,7 @@ class UserCreate(BaseModel):
                 "work_willingness": 7,
                 "preferred_location": "Bobst Library",
                 "time_preference": "morning",
-                "gpa": 3.5
+                "avg_gpa": 3.5
             }
         }
 
@@ -62,6 +62,8 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     """Schema for authentication token response."""
     access_token: str
+    refresh_token: str
+    expires_at: int  # Unix timestamp when access_token expires
     token_type: str = "bearer"
     user: UserResponse
 

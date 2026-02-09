@@ -8,7 +8,6 @@ def normalize_string(value: str) -> str:
         return None
     return value.strip().lower()
 
-
 class UserBase(BaseModel):
     """Base schema with common user fields."""
     name: str
@@ -20,7 +19,7 @@ class UserBase(BaseModel):
     work_willingness: int = Field(..., ge=1, le=10, description="Work willingness score (1-10)")
     preferred_location: str
     time_preference: str 
-    gpa: Optional[float] = Field(None, ge=0.0, le=4.0, description="GPA (0.0-4.0)")
+    avg_gpa: Optional[float] = Field(None, ge=0.0, le=4.0, description="GPA (0.0-4.0)")
 
 
 class UserResponse(BaseModel):
@@ -35,7 +34,7 @@ class UserResponse(BaseModel):
     work_willingness: int
     preferred_location: str 
     time_preference: str
-    gpa: Optional[float] = None
+    avg_gpa: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -51,7 +50,7 @@ class UserResponse(BaseModel):
                 "work_willingness": 8,
                 "preferred_location": "bobst library",
                 "time_preference": "morning",
-                "gpa": 3.5
+                "avg_gpa": 3.5
             }
         }
 
@@ -66,7 +65,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = Field(None, min_length=8)
     preferred_location: Optional[str] = None
     time_preference: Optional[str] = None
-    gpa: Optional[float] = Field(None, ge=0.0, le=4.0)
+    avg_gpa: Optional[float] = Field(None, ge=0.0, le=4.0)
 
     @field_validator('name', 'major', 'minor', 'preferred_location', 'time_preference', mode='before')
     @classmethod

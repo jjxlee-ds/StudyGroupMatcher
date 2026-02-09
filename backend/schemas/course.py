@@ -10,7 +10,7 @@ class CourseCreate(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "course_code": "CS-UY 1134",
+                "course_code": "CSCI102",
                 "course_name": "Data Structures and Algorithms",
                 "course_section": 1
             }

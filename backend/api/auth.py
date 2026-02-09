@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
-from database import get_supabase
+from database import get_supabase, get_supabase_admin
 from dependencies import get_current_user
 from schemas.user import UserResponse
 from schemas.auth import (
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @handle_supabase_errors
 async def signup(
     user: UserCreate,
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase_admin)
 ) -> UserResponse:
     """Register a new user account."""
     if check_user_exists_by_email(supabase, user.nyu_email):
@@ -44,9 +44,13 @@ async def signup(
             detail="NYU ID already registered"
         )
 
-    auth_response = supabase.auth.sign_up({
+    auth_response = supabase.auth.admin.create_user({
         "email": user.nyu_email,
-        "password": user.password
+        "password": user.password,
+        "email_confirm": True,
+        "user_metadata": {
+            "name": user.name
+        }
     })
 
     if not auth_response.user:
@@ -63,7 +67,10 @@ async def signup(
         "major": user.major,
         "minor": user.minor,
         "academic_standing": user.academic_standing,
-        "work_willingness": user.work_willingness
+        "work_willingness": user.work_willingness,
+        "preferred_location": user.preferred_location,
+        "time_preference": user.time_preference,        
+        "avg_gpa": user.avg_gpa   
     }
 
     try:
@@ -81,10 +88,16 @@ async def login(
     supabase: Client = Depends(get_supabase)
 ) -> TokenResponse:
     """Authenticate user and return access token."""
-    auth_response = supabase.auth.sign_in_with_password({
-        "email": credentials.nyu_email,
-        "password": credentials.password
-    })
+    try:
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": credentials.nyu_email,
+            "password": credentials.password
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
 
     if not auth_response.session:
         raise HTTPException(
@@ -96,6 +109,8 @@ async def login(
 
     return {
         "access_token": auth_response.session.access_token,
+        "refresh_token": auth_response.session.refresh_token,
+        "expires_at": auth_response.session.expires_at,
         "token_type": "bearer",
         "user": user_data
     }
@@ -131,6 +146,8 @@ async def refresh_token(
 
     return {
         "access_token": auth_response.session.access_token,
+        "refresh_token": auth_response.session.refresh_token,
+        "expires_at": auth_response.session.expires_at,
         "token_type": "bearer",
         "user": user_data
     }

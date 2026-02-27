@@ -35,12 +35,10 @@ class CourseService {
   static Future<Course> create({
     required String courseCode,
     required String courseName,
-    required int courseSection,
   }) async {
     final response = await ApiClient.post('/courses/', body: {
       'course_code': courseCode,
       'course_name': courseName,
-      'course_section': courseSection,
     }, withAuth: false);
     if (response.statusCode == 201) {
       return Course.fromJson(jsonDecode(response.body));

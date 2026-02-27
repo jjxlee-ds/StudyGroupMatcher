@@ -15,7 +15,6 @@ class UserCourseService {
   static Future<UserCourse> enroll({
     required String nyuId,
     required int courseId,
-    required int courseSection,
     required String semester,
     required String currentCourseTimeStart,
     required String currentCourseTimeEnd,
@@ -23,7 +22,6 @@ class UserCourseService {
     final response = await ApiClient.post('/user-courses/', body: {
       'nyu_id': nyuId,
       'course_id': courseId,
-      'course_section': courseSection,
       'semester': semester,
       'current_course_time_start': currentCourseTimeStart,
       'current_course_time_end': currentCourseTimeEnd,

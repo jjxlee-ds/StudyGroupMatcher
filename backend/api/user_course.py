@@ -68,13 +68,12 @@ async def enroll_in_course(
             detail="You can only enroll yourself in courses"
         )
 
-    # Check if already enrolled in this course/section/semester
+    # Check if already enrolled in this course/semester
     existing = (
         supabase.table("user_courses")
         .select("id")
         .eq("nyu_id", normalized_nyu_id)
         .eq("course_id", request.course_id)
-        .eq("course_section", request.course_section)
         .eq("semester", request.semester)
         .execute()
     )
@@ -82,13 +81,12 @@ async def enroll_in_course(
     if existing.data:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Already enrolled in this course section for this semester"
+            detail="Already enrolled in this course for this semester"
         )
 
     user_course_data = {
         "nyu_id": normalized_nyu_id,
         "course_id": request.course_id,
-        "course_section": request.course_section,
         "semester": request.semester,
         "current_course_time_start": request.current_course_time_start,
         "current_course_time_end": request.current_course_time_end

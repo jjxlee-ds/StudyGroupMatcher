@@ -19,7 +19,7 @@ def handle_supabase_errors(func):
 
 
 def normalize_code(value: Optional[str]) -> Optional[str]:
-    """Normalize course/section codes by removing spaces and converting to uppercase."""
+    """Normalize course codes by removing spaces and converting to uppercase."""
     if value is None or not value.strip():
         return None
     return value.strip().replace(" ", "").upper()

@@ -87,20 +87,18 @@ async def create_course(
         supabase.table("courses")
         .select("id")
         .eq("course_code", normalized_code)
-        .eq("course_section", request.course_section)
         .execute()
     )
 
     if existing.data:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="A course with this code and section already exists"
+            detail="A course with this code already exists"
         )
 
     course_data = {
         "course_code": normalized_code,
-        "course_name": normalized_name,
-        "course_section": request.course_section
+        "course_name": normalized_name
     }
 
     result = supabase.table("courses").insert(course_data).execute()

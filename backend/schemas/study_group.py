@@ -38,3 +38,19 @@ class StudyGroupResponse(BaseModel):
 class StudyGroupJoin(BaseModel):
     """Schema for joining a study group."""
     role: str = Field(default="member", description="Role in the group: 'admin' or 'member'")
+
+
+class StudyGroupRecommendation(BaseModel):
+    """Schema for recommended study group with match score."""
+    id: str
+    course_id: str
+    name: str
+    max_members: int
+    location: Optional[str] = None
+    created_at: Optional[datetime] = None
+    current_members: int
+    match_score: float = Field(..., description="Total match score (0-100)")
+    score_breakdown: dict = Field(..., description="Score breakdown by factor")
+
+    class Config:
+        from_attributes = True

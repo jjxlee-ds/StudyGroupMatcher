@@ -7,7 +7,6 @@ class UserCourseCreate(BaseModel):
     """Schema for enrolling a user in a course."""
     nyu_id: str
     course_id: int
-    course_section: int = Field(..., ge=1)
     semester: str = Field(..., min_length=1, description="e.g., 'Fall 2024', 'Spring 2025'")
     current_course_time_start: str = Field(..., description="Course start time (e.g., '09:00')")
     current_course_time_end: str = Field(..., description="Course end time (e.g., '10:30')")
@@ -24,7 +23,6 @@ class UserCourseCreate(BaseModel):
             "example": {
                 "nyu_id": "n12345678",
                 "course_id": 1,
-                "course_section": 1,
                 "semester": "fall 2024",
                 "current_course_time_start": "09:00",
                 "current_course_time_end": "10:30"
@@ -37,7 +35,6 @@ class UserCourseResponse(BaseModel):
     id: Optional[int] = None
     nyu_id: str
     course_id: int
-    course_section: int
     semester: str
     current_course_time_start: str
     current_course_time_end: str
@@ -49,7 +46,6 @@ class UserCourseResponse(BaseModel):
 
 class UserCourseUpdate(BaseModel):
     """Schema for updating user course enrollment."""
-    course_section: Optional[int] = Field(None, ge=1)
     semester: Optional[str] = None
     current_course_time_start: Optional[str] = None
     current_course_time_end: Optional[str] = None

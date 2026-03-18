@@ -865,7 +865,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
   Widget _buildDropdown() {
     return DropdownButtonFormField<int>(
-      value: _academicStanding,
+      initialValue: _academicStanding,
       decoration: InputDecoration(
         labelText: 'Academic Standing',
         border: OutlineInputBorder(
@@ -919,7 +919,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
   Widget _buildLocationDropdown() {
     return DropdownButtonFormField<String>(
-      value: _preferredLocation,
+      initialValue: _preferredLocation,
       decoration: InputDecoration(
         labelText: 'Preferred Location',
         border: OutlineInputBorder(
@@ -942,7 +942,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
   Widget _buildTimeDropdown() {
     return DropdownButtonFormField<String>(
-      value: _timePreference,
+      initialValue: _timePreference,
       decoration: InputDecoration(
         labelText: 'Time Preference',
         border: OutlineInputBorder(

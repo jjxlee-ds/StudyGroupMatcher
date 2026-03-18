@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
-from database import get_supabase
-from dependencies import get_current_user
-from schemas.user import UserResponse, UserUpdate
-from api.user_service import (
+from app.database import get_supabase
+from app.dependencies import get_current_user
+from app.schemas.user import UserResponse, UserUpdate
+from app.services.user_service import (
     get_user_by_id,
     update_user_in_db,
     update_user_password,
     delete_user_from_db
 )
-from api.utils import handle_supabase_errors
+from app.services.utils import handle_supabase_errors
 
 
 router = APIRouter(prefix="/users", tags=["users"])

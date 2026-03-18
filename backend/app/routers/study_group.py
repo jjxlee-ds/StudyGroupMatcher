@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional
 from supabase import Client
 
-from database import get_supabase
-from dependencies import get_current_user
-from schemas.study_group import StudyGroupCreate, StudyGroupResponse, StudyGroupRecommendation
-from api.utils import handle_supabase_errors
+from app.database import get_supabase
+from app.dependencies import get_current_user
+from app.schemas.study_group import StudyGroupCreate, StudyGroupResponse, StudyGroupRecommendation
+from app.services.utils import handle_supabase_errors
 
 
 router = APIRouter(prefix="/study-groups", tags=["study-groups"])

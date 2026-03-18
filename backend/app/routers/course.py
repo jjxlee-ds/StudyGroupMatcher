@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional
 from supabase import Client
 
-from database import get_supabase
-from schemas.course import CourseResponse, CourseCreate
-from api.utils import handle_supabase_errors, normalize_code
+from app.database import get_supabase
+from app.schemas.course import CourseResponse, CourseCreate
+from app.services.utils import handle_supabase_errors, normalize_code
 
 
 router = APIRouter(prefix="/courses", tags=["courses"])

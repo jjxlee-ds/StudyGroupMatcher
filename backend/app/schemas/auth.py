@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 
-from schemas.user import UserResponse, normalize_string
+from app.schemas.user import UserResponse, normalize_string
 
 
 class UserCreate(BaseModel):

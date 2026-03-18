@@ -1,5 +1,5 @@
-from schemas.user import UserResponse, UserUpdate, UserBase
-from schemas.auth import (
+from app.schemas.user import UserResponse, UserUpdate, UserBase
+from app.schemas.auth import (
     UserCreate,
     LoginRequest,
     TokenResponse,
@@ -7,8 +7,8 @@ from schemas.auth import (
     PasswordResetRequest,
     PasswordResetConfirm
 )
-from schemas.course import CourseCreate, CourseResponse
-from schemas.user_course import UserCourseCreate, UserCourseResponse, UserCourseUpdate
+from app.schemas.course import CourseCreate, CourseResponse
+from app.schemas.user_course import UserCourseCreate, UserCourseResponse, UserCourseUpdate
 
 __all__ = [
     # User schemas

@@ -45,18 +45,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
       for (final uc in userCourses) {
         final course = courseMap[uc.courseId];
         if (course != null) {
-          final startTime = _parseTime(uc.currentCourseTimeStart);
-          final endTime = _parseTime(uc.currentCourseTimeEnd);
-          if (startTime != null && endTime != null) {
-            events.add(CalendarEvent(
-              title: course.courseName,
-              subtitle: course.courseCode,
-              startTime: startTime,
-              endTime: endTime,
-              type: EventType.classEvent,
-              location: 'Room TBD',
-            ));
-          }
+          final start = _parseTime(uc.startTime) ?? const TimeOfDay(hour: 9, minute: 0);
+          final end = _parseTime(uc.endTime) ?? const TimeOfDay(hour: 10, minute: 30);
+          events.add(CalendarEvent(
+            title: course.courseName,
+            subtitle: '${course.courseCode} · ${uc.term} ${uc.year}',
+            startTime: start,
+            endTime: end,
+            type: EventType.classEvent,
+            location: 'Room TBD',
+          ));
         }
       }
 
@@ -81,14 +79,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
-  TimeOfDay? _parseTime(String timeStr) {
+  TimeOfDay? _parseTime(String? timeStr) {
+    if (timeStr == null) return null;
     try {
       final parts = timeStr.split(':');
       if (parts.length >= 2) {
-        return TimeOfDay(
-          hour: int.parse(parts[0]),
-          minute: int.parse(parts[1]),
-        );
+        return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
       }
     } catch (_) {}
     return null;

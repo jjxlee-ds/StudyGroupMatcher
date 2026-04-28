@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+import '../services/chat_service.dart';
 import '../services/study_group_service.dart';
+import 'chat_room_screen.dart';
+import 'create_group_screen.dart';
 import 'profile_screen.dart';
 import 'calendar_screen.dart';
 import 'home_screen.dart';
@@ -14,7 +19,7 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   static const Color primaryColor = Color(0xFF57068C);
-  static const Color backgroundLight = Color(0xFFF9FAFB);
+  static const Color backgroundLight = Colors.white;
 
   // Pastel colors for avatars
   static const List<Map<String, Color>> pastelColors = [
@@ -43,21 +48,38 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _loadChats() async {
     setState(() => _loading = true);
+    // Read user ID before any await to avoid BuildContext across async gap
+    final currentUserId =
+        Provider.of<AuthProvider>(context, listen: false).user?.id;
     try {
-      final studyGroups = await StudyGroupService.getMyStudyGroups();
+      final results = await Future.wait([
+        StudyGroupService.getMyStudyGroups(),
+        ChatService.getRooms(),
+      ]);
 
-      // Convert study groups to chat items with mock data
+      final studyGroups = results[0] as List;
+      final rooms = results[1] as List<Map<String, dynamic>>;
+
+      // group_id → room 전체 매핑
+      final roomMap = <String, Map<String, dynamic>>{
+        for (final r in rooms) r['group_id'] as String: r,
+      };
+
       final chats = studyGroups.asMap().entries.map((entry) {
         final index = entry.key;
         final sg = entry.value;
+        final room = roomMap[sg.id];
+        final lastMessageAt = room?['last_message_at'] as String?;
         return ChatItem(
           id: sg.id,
+          roomId: room?['id'] as String?,
           name: sg.name,
-          lastMessage: _getMockLastMessage(index),
-          timestamp: _getMockTimestamp(index),
-          memberCount: sg.currentMembers ?? 2,
-          hasUnread: index == 0, // First chat has unread
+          lastMessage: lastMessageAt != null ? 'Tap to continue the conversation' : 'No messages yet',
+          timestamp: lastMessageAt != null ? _formatTimestamp(lastMessageAt) : '',
+          memberCount: sg.currentMembers ?? 1,
+          hasUnread: false,
           colorIndex: index % pastelColors.length,
+          isAdmin: sg.adminId != null && sg.adminId == currentUserId,
         );
       }).toList();
 
@@ -67,70 +89,63 @@ class _ChatListScreenState extends State<ChatListScreen> {
         _loading = false;
       });
     } catch (e) {
-      // Use demo data if API fails
       setState(() {
-        _chats = _getDemoChats();
-        _filteredChats = _chats;
+        _chats = [];
+        _filteredChats = [];
         _loading = false;
       });
     }
   }
 
-  List<ChatItem> _getDemoChats() {
-    return [
-      ChatItem(
-        id: '1',
-        name: 'CS101 Final Prep',
-        lastMessage:
-            "Let's meet at the library at 5 PM tomorrow for the review session.",
-        timestamp: '2m ago',
-        memberCount: 4,
-        hasUnread: true,
-        colorIndex: 0,
-      ),
-      ChatItem(
-        id: '2',
-        name: 'Intro to Psychology',
-        lastMessage: 'I found a great summary for Chapter 4!',
-        timestamp: '1h ago',
-        memberCount: 3,
-        hasUnread: false,
-        colorIndex: 1,
-      ),
-      ChatItem(
-        id: '3',
-        name: 'Calculus II Buddies',
-        lastMessage: 'Sarah: Does anyone understand the chain rule part?',
-        timestamp: 'Yesterday',
-        memberCount: 2,
-        hasUnread: false,
-        colorIndex: 2,
-      ),
-      ChatItem(
-        id: '4',
-        name: 'Art History Discussion',
-        lastMessage: 'The Renaissance quiz was actually pretty easy.',
-        timestamp: 'Tue',
-        memberCount: 4,
-        hasUnread: false,
-        colorIndex: 3,
-      ),
-    ];
+  Future<void> _openChat(ChatItem chat) async {
+    String? roomId = chat.roomId;
+
+    if (roomId == null) {
+      try {
+        final room = await ChatService.createRoom(chat.id);
+        roomId = room['id'] as String;
+        _loadChats(); // refresh list
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to open chat: $e'), backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+    }
+
+    if (mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatRoomScreen(
+            roomId: roomId!,
+            groupId: chat.id,
+            groupName: chat.name,
+            memberCount: chat.memberCount,
+            isAdmin: chat.isAdmin,
+          ),
+        ),
+      );
+    }
   }
 
-  String _getMockLastMessage(int index) {
-    final messages = [
-      "Let's meet at the library at 5 PM tomorrow!",
-      'I found a great summary for Chapter 4!',
-      'Does anyone understand this part?',
-      'The quiz was actually pretty easy.',
-    ];
-    return messages[index % messages.length];
-  }
 
-  String _getMockTimestamp(int index) {
-    final timestamps = ['2m ago', '1h ago', 'Yesterday', 'Tue'];
-    return timestamps[index % timestamps.length];
+  String _formatTimestamp(String isoString) {
+    try {
+      final dt = DateTime.parse(isoString).toLocal();
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inMinutes < 1) return 'Just now';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      if (diff.inDays == 1) return 'Yesterday';
+      if (diff.inDays < 7) return '${diff.inDays}d ago';
+      return '${dt.month}/${dt.day}';
+    } catch (_) {
+      return '';
+    }
   }
 
   void _filterChats(String query) {
@@ -174,8 +189,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // TODO: Create new chat/group
+        onPressed: () async {
+          final created = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+          );
+          if (created == true) _loadChats();
         },
         backgroundColor: primaryColor,
         elevation: 8,
@@ -299,9 +318,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final colors = pastelColors[chat.colorIndex];
 
     return GestureDetector(
-      onTap: () {
-        // TODO: Navigate to chat screen
-      },
+      onTap: () => _openChat(chat),
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(12),
@@ -443,69 +460,54 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
       ),
       padding: const EdgeInsets.only(left: 8, right: 8, top: 12, bottom: 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildNavItem(
-                icon: Icons.auto_awesome,
-                label: 'Recs',
-                isActive: false,
-                onTap: () {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (_) => const RecommendationScreen()),
-                  );
-                },
-              ),
-              _buildNavItem(
-                icon: Icons.chat_bubble,
-                label: 'Chatting',
-                isActive: true,
-                onTap: () {},
-              ),
-              _buildNavItem(
-                icon: Icons.home_outlined,
-                label: 'Home',
-                isActive: false,
-                onTap: () {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (_) => const HomeScreen()),
-                  );
-                },
-              ),
-              _buildNavItem(
-                icon: Icons.calendar_today,
-                label: 'Calendar',
-                isActive: false,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const CalendarScreen()),
-                  );
-                },
-              ),
-              _buildNavItem(
-                icon: Icons.person_outline,
-                label: 'Profile',
-                isActive: false,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                  );
-                },
-              ),
-            ],
+          _buildNavItem(
+            icon: Icons.auto_awesome,
+            label: 'Recs',
+            isActive: false,
+            onTap: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const RecommendationScreen()),
+              );
+            },
           ),
-          const SizedBox(height: 8),
-          // Home indicator
-          Container(
-            width: 128,
-            height: 6,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(3),
-            ),
+          _buildNavItem(
+            icon: Icons.chat_bubble,
+            label: 'Chatting',
+            isActive: true,
+            onTap: () {},
+          ),
+          _buildNavItem(
+            icon: Icons.home_outlined,
+            label: 'Home',
+            isActive: false,
+            onTap: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+              );
+            },
+          ),
+          _buildNavItem(
+            icon: Icons.calendar_today,
+            label: 'Calendar',
+            isActive: false,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CalendarScreen()),
+              );
+            },
+          ),
+          _buildNavItem(
+            icon: Icons.person_outline,
+            label: 'Profile',
+            isActive: false,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
           ),
         ],
       ),
@@ -543,20 +545,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
 class ChatItem {
   final String id;
+  final String? roomId;
   final String name;
   final String lastMessage;
   final String timestamp;
   final int memberCount;
   final bool hasUnread;
   final int colorIndex;
+  final bool isAdmin;
 
   ChatItem({
     required this.id,
+    this.roomId,
     required this.name,
     required this.lastMessage,
     required this.timestamp,
     required this.memberCount,
     required this.hasUnread,
     required this.colorIndex,
+    this.isAdmin = false,
   });
 }

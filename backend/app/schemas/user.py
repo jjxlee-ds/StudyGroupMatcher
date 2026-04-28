@@ -17,8 +17,8 @@ class UserBase(BaseModel):
     minor: Optional[str] = None
     academic_standing: int = Field(..., ge=1, le=4, description="Year in school (1-4)")
     work_willingness: int = Field(..., ge=1, le=10, description="Work willingness score (1-10)")
-    preferred_location: str
-    time_preference: str 
+    preferred_location: Optional[str] = None
+    time_preference: Optional[str] = None
     avg_gpa: Optional[float] = Field(None, ge=0.0, le=4.0, description="GPA (0.0-4.0)")
 
 
@@ -32,8 +32,8 @@ class UserResponse(BaseModel):
     minor: Optional[str] = None
     academic_standing: int
     work_willingness: int
-    preferred_location: str 
-    time_preference: str
+    preferred_location: Optional[str] = None
+    time_preference: Optional[str] = None
     avg_gpa: Optional[float] = None
 
     class Config:

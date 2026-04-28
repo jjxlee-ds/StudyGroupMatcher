@@ -37,7 +37,7 @@ class User {
       workWillingness: json['work_willingness'] as int,
       preferredLocation: json['preferred_location'] as String? ?? '',
       timePreference: json['time_preference'] as String? ?? '',
-      gpa: (json['gpa'] as num?)?.toDouble(),
+      gpa: (json['avg_gpa'] as num?)?.toDouble(),
     );
   }
 
@@ -53,7 +53,7 @@ class User {
       'work_willingness': workWillingness,
       'preferred_location': preferredLocation,
       'time_preference': timePreference,
-      'gpa': gpa,
+      'avg_gpa': gpa,
     };
   }
 }
@@ -91,7 +91,7 @@ class UserUpdate {
     if (password != null) map['password'] = password;
     if (preferredLocation != null) map['preferred_location'] = preferredLocation;
     if (timePreference != null) map['time_preference'] = timePreference;
-    if (gpa != null) map['gpa'] = gpa;
+    if (gpa != null) map['avg_gpa'] = gpa;
     return map;
   }
 }

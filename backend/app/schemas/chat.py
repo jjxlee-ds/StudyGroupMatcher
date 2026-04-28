@@ -10,6 +10,7 @@ class ChatRoomCreate(BaseModel):
 class ChatRoomResponse(BaseModel):
     id: str
     group_id: str
+    name: Optional[str] = None
     created_at: datetime
     last_message_at: Optional[datetime] = None
 

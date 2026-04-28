@@ -11,6 +11,8 @@ def handle_supabase_errors(func):
         except HTTPException:
             raise
         except Exception as e:
+            import traceback
+            print(f"[ROUTE ERROR] {func.__name__}: {traceback.format_exc()}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=str(e)

@@ -18,30 +18,89 @@ class ApiClient {
     return headers;
   }
 
+  /// Attempts to refresh the access token using the stored refresh token.
+  /// Returns true if refresh succeeded and new tokens are saved.
+  static Future<bool> _tryRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final refreshToken = prefs.getString('refresh_token');
+    if (refreshToken == null) return false;
+
+    try {
+      final url = Uri.parse('${ApiConfig.baseUrl}/auth/refresh');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': refreshToken}),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await prefs.setString('access_token', data['access_token'] as String);
+        final newRefresh = data['refresh_token'] as String?;
+        if (newRefresh != null) {
+          await prefs.setString('refresh_token', newRefresh);
+        }
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   static Future<http.Response> get(String path, {bool withAuth = true}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}$path');
-    final headers = await _headers(withAuth: withAuth);
-    return http.get(url, headers: headers);
+    var headers = await _headers(withAuth: withAuth);
+    var response = await http.get(url, headers: headers);
+    if (response.statusCode == 401 && withAuth) {
+      if (await _tryRefreshToken()) {
+        headers = await _headers(withAuth: true);
+        response = await http.get(url, headers: headers);
+      }
+    }
+    return response;
   }
 
   static Future<http.Response> post(String path,
       {Map<String, dynamic>? body, bool withAuth = true}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}$path');
-    final headers = await _headers(withAuth: withAuth);
-    return http.post(url, headers: headers, body: jsonEncode(body));
+    var headers = await _headers(withAuth: withAuth);
+    var response =
+        await http.post(url, headers: headers, body: jsonEncode(body));
+    if (response.statusCode == 401 && withAuth) {
+      if (await _tryRefreshToken()) {
+        headers = await _headers(withAuth: true);
+        response =
+            await http.post(url, headers: headers, body: jsonEncode(body));
+      }
+    }
+    return response;
   }
 
   static Future<http.Response> put(String path,
       {Map<String, dynamic>? body, bool withAuth = true}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}$path');
-    final headers = await _headers(withAuth: withAuth);
-    return http.put(url, headers: headers, body: jsonEncode(body));
+    var headers = await _headers(withAuth: withAuth);
+    var response =
+        await http.put(url, headers: headers, body: jsonEncode(body));
+    if (response.statusCode == 401 && withAuth) {
+      if (await _tryRefreshToken()) {
+        headers = await _headers(withAuth: true);
+        response =
+            await http.put(url, headers: headers, body: jsonEncode(body));
+      }
+    }
+    return response;
   }
 
   static Future<http.Response> delete(String path,
       {bool withAuth = true}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}$path');
-    final headers = await _headers(withAuth: withAuth);
-    return http.delete(url, headers: headers);
+    var headers = await _headers(withAuth: withAuth);
+    var response = await http.delete(url, headers: headers);
+    if (response.statusCode == 401 && withAuth) {
+      if (await _tryRefreshToken()) {
+        headers = await _headers(withAuth: true);
+        response = await http.delete(url, headers: headers);
+      }
+    }
+    return response;
   }
 }

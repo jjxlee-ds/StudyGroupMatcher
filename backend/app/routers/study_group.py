@@ -2,13 +2,53 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional
 from supabase import Client
 
-from app.database import get_supabase
+from app.database import get_supabase, get_supabase_admin
 from app.dependencies import get_current_user
-from app.schemas.study_group import StudyGroupCreate, StudyGroupResponse, StudyGroupRecommendation
+from app.schemas.join_request import JoinRequestResponse
+from app.schemas.study_group import GroupMemberResponse, StudyGroupCreate, StudyGroupResponse, StudyGroupRecommendation
+from app.services.chat_service import create_room
+from app.services.group_service import assert_group_admin, get_group_or_404
 from app.services.utils import handle_supabase_errors
 
 
 router = APIRouter(prefix="/study-groups", tags=["study-groups"])
+
+
+def _extract_member_count(group: dict) -> int:
+    count_data = group.pop("user_study_groups", [])
+    if count_data and isinstance(count_data, list):
+        return count_data[0].get("count", 0)
+    return 0
+
+
+def _attach_group_metadata(supabase: Client, groups: List[dict]) -> List[dict]:
+    """Attach fields the frontend expects but that are derived from memberships."""
+    if not groups:
+        return groups
+
+    group_ids = [group["id"] for group in groups]
+    memberships = (
+        supabase.table("user_study_groups")
+        .select("study_group_id, user_id, role")
+        .in_("study_group_id", group_ids)
+        .execute()
+    )
+
+    counts = {group_id: 0 for group_id in group_ids}
+    admins: dict[str, str] = {}
+    for row in memberships.data or []:
+        group_id = row["study_group_id"]
+        counts[group_id] = counts.get(group_id, 0) + 1
+        if row.get("role") == "admin":
+            admins[group_id] = row["user_id"]
+
+    for group in groups:
+        embedded_count = _extract_member_count(group)
+        group_id = group["id"]
+        group["current_members"] = counts.get(group_id) or embedded_count
+        group["admin_id"] = admins.get(group_id)
+
+    return groups
 
 
 # ============== Recommendation Score Calculation ==============
@@ -208,7 +248,8 @@ def calculate_total_score(user: dict, group_averages: dict) -> tuple[float, dict
 async def create_study_group(
     request: StudyGroupCreate,
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> StudyGroupResponse:
     """Create a new study group and add the creator as admin."""
     group_data = {
@@ -236,7 +277,11 @@ async def create_study_group(
     }
     supabase.table("user_study_groups").insert(membership_data).execute()
 
+    # Auto-create chat room and add creator (admin client bypasses RLS)
+    create_room(supabase_admin, group["id"], current_user["id"], name=request.name)
+
     group["current_members"] = 1
+    group["admin_id"] = current_user["id"]
     return group
 
 
@@ -254,21 +299,13 @@ async def search_study_groups_by_name(
         .execute()
     )
 
-    groups = result.data or []
-    for group in groups:
-        count_data = group.pop("user_study_groups", [])
-        if count_data and isinstance(count_data, list) and len(count_data) > 0:
-            group["current_members"] = count_data[0].get("count", 0)
-        else:
-            group["current_members"] = 0
-
-    return groups
+    return _attach_group_metadata(supabase, result.data or [])
 
 
 @router.get("/course/{course_id}", response_model=List[StudyGroupResponse])
 @handle_supabase_errors
 async def get_study_groups_by_course(
-    course_id: str,
+    course_id: int,
     supabase: Client = Depends(get_supabase)
 ) -> List[StudyGroupResponse]:
     """Get all study groups for a specific course with current member counts."""
@@ -279,80 +316,68 @@ async def get_study_groups_by_course(
         .execute()
     )
 
-    groups = result.data or []
-    for group in groups:
-        count_data = group.pop("user_study_groups", [])
-        if count_data and isinstance(count_data, list) and len(count_data) > 0:
-            group["current_members"] = count_data[0].get("count", 0)
-        else:
-            group["current_members"] = 0
-
-    return groups
+    return _attach_group_metadata(supabase, result.data or [])
 
 
 @router.post("/{group_id}/join", status_code=status.HTTP_201_CREATED)
 @handle_supabase_errors
-async def join_study_group(
+async def request_join_study_group(
     group_id: str,
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    """Join an existing study group."""
-    # Verify group exists
-    group_result = (
-        supabase.table("study_groups")
-        .select("*")
-        .eq("id", group_id)
-        .single()
-        .execute()
-    )
+    """스터디 그룹 참가 신청. 방장이 수락해야 최종 합류."""
+    group = get_group_or_404(supabase, group_id)
 
-    if not group_result.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Study group not found"
-        )
-
-    group = group_result.data
-
-    # Check if already a member
-    existing = (
+    # 이미 멤버인지 확인
+    existing_member = (
         supabase.table("user_study_groups")
         .select("user_id")
         .eq("user_id", current_user["id"])
         .eq("study_group_id", group_id)
         .execute()
     )
-
-    if existing.data:
+    if existing_member.data:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Already a member of this study group"
+            detail="Already a member of this study group",
         )
 
-    # Check if group is full
+    # 이미 신청 중인지 확인
+    existing_request = (
+        supabase.table("group_join_requests")
+        .select("id, status")
+        .eq("user_id", current_user["id"])
+        .eq("study_group_id", group_id)
+        .eq("status", "pending")
+        .execute()
+    )
+    if existing_request.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Join request already pending",
+        )
+
+    # 정원 초과 확인
     member_count = (
         supabase.table("user_study_groups")
         .select("*", count="exact")
         .eq("study_group_id", group_id)
         .execute()
     )
-
     if member_count.count is not None and member_count.count >= group["max_members"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Study group is full"
+            detail="Study group is full",
         )
 
-    membership_data = {
+    supabase.table("group_join_requests").insert({
         "user_id": current_user["id"],
         "study_group_id": group_id,
-        "role": "member",
-    }
+        "status": "pending",
+    }).execute()
 
-    supabase.table("user_study_groups").insert(membership_data).execute()
-
-    return {"message": "Successfully joined the study group"}
+    return {"message": "Join request submitted. Waiting for admin approval."}
 
 
 @router.delete("/{group_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
@@ -360,7 +385,8 @@ async def join_study_group(
 async def leave_study_group(
     group_id: str,
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ):
     """Leave a study group."""
     existing = (
@@ -384,6 +410,17 @@ async def leave_study_group(
         .eq("study_group_id", group_id)
         .execute()
     )
+
+    room_result = (
+        supabase_admin.table("chat_rooms")
+        .select("id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    if room_result.data:
+        supabase_admin.table("room_members").delete().eq(
+            "room_id", room_result.data[0]["id"]
+        ).eq("user_id", current_user["id"]).execute()
 
 
 @router.get("/me", response_model=List[StudyGroupResponse])
@@ -412,15 +449,7 @@ async def get_my_study_groups(
         .execute()
     )
 
-    groups = result.data or []
-    for group in groups:
-        count_data = group.pop("user_study_groups", [])
-        if count_data and isinstance(count_data, list) and len(count_data) > 0:
-            group["current_members"] = count_data[0].get("count", 0)
-        else:
-            group["current_members"] = 0
-
-    return groups
+    return _attach_group_metadata(supabase, result.data or [])
 
 
 @router.get("/recommend", response_model=List[StudyGroupRecommendation])
@@ -445,7 +474,7 @@ async def get_recommended_study_groups(
     user_courses = (
         supabase.table("user_courses")
         .select("course_id")
-        .eq("nyu_id", current_user["nyu_id"])
+        .eq("user_id", current_user["id"])
         .execute()
     )
 
@@ -484,11 +513,8 @@ async def get_recommended_study_groups(
             continue
 
         # Get current member count
-        count_data = group.pop("user_study_groups", [])
-        if count_data and isinstance(count_data, list) and len(count_data) > 0:
-            current_members = count_data[0].get("count", 0)
-        else:
-            current_members = 0
+        metadata_group = _attach_group_metadata(supabase, [group])[0]
+        current_members = metadata_group["current_members"]
 
         # Skip full groups
         if current_members >= group.get("max_members", 0):
@@ -523,6 +549,7 @@ async def get_recommended_study_groups(
             "location": group.get("location"),
             "created_at": group.get("created_at"),
             "current_members": current_members,
+            "admin_id": metadata_group.get("admin_id"),
             "match_score": total_score,
             "score_breakdown": breakdown
         })
@@ -531,3 +558,216 @@ async def get_recommended_study_groups(
     recommendations.sort(key=lambda x: x["match_score"], reverse=True)
 
     return recommendations[:limit]
+
+
+@router.get("/{group_id}/members", response_model=List[GroupMemberResponse])
+@handle_supabase_errors
+async def get_group_members(
+    group_id: str,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+) -> List[GroupMemberResponse]:
+    """그룹 멤버 목록 조회. role 포함 — admin이 방장."""
+    from app.services.schedule_service import assert_group_member
+    assert_group_member(supabase, group_id, current_user["id"])
+
+    result = (
+        supabase.table("user_study_groups")
+        .select("role, users(id, name, nyu_email, major, academic_standing, work_willingness, avg_gpa)")
+        .eq("study_group_id", group_id)
+        .execute()
+    )
+
+    members = []
+    for row in (result.data or []):
+        user = row.get("users") or {}
+        members.append({
+            "user_id": user.get("id"),
+            "role": row["role"],
+            "name": user.get("name"),
+            "nyu_email": user.get("nyu_email"),
+            "major": user.get("major"),
+            "academic_standing": user.get("academic_standing"),
+            "work_willingness": user.get("work_willingness"),
+            "avg_gpa": user.get("avg_gpa"),
+        })
+    return members
+
+
+# ============== Admin (방장) Endpoints ==============
+
+
+@router.get("/{group_id}/requests", response_model=List[JoinRequestResponse])
+@handle_supabase_errors
+async def get_join_requests(
+    group_id: str,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+) -> List[JoinRequestResponse]:
+    """(방장 전용) 참가 신청 목록 조회 — 신청자 개인 정보 포함."""
+    get_group_or_404(supabase, group_id)
+    assert_group_admin(supabase, group_id, current_user["id"])
+
+    requests_result = (
+        supabase.table("group_join_requests")
+        .select("*, users(*)")
+        .eq("study_group_id", group_id)
+        .eq("status", "pending")
+        .order("created_at")
+        .execute()
+    )
+
+    rows = requests_result.data or []
+    return [
+        {**row, "user": row.pop("users", None)}
+        for row in rows
+    ]
+
+
+@router.post("/{group_id}/requests/{request_id}/accept", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def accept_join_request(
+    group_id: str,
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
+):
+    """(방장 전용) 참가 신청 수락 — user_study_groups에 멤버로 추가."""
+    get_group_or_404(supabase, group_id)
+    assert_group_admin(supabase, group_id, current_user["id"])
+
+    req_result = (
+        supabase.table("group_join_requests")
+        .select("*")
+        .eq("id", request_id)
+        .eq("study_group_id", group_id)
+        .eq("status", "pending")
+        .execute()
+    )
+    if not req_result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pending join request not found",
+        )
+
+    applicant_id = req_result.data[0]["user_id"]
+
+    supabase.table("user_study_groups").insert({
+        "user_id": applicant_id,
+        "study_group_id": group_id,
+        "role": "member",
+    }).execute()
+
+    supabase.table("group_join_requests").update(
+        {"status": "accepted"}
+    ).eq("id", request_id).execute()
+
+    # Add new member to chat room (admin client bypasses RLS)
+    room_result = (
+        supabase_admin.table("chat_rooms")
+        .select("id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    if room_result.data:
+        room_id = room_result.data[0]["id"]
+        existing_room_member = (
+            supabase_admin.table("room_members")
+            .select("user_id")
+            .eq("room_id", room_id)
+            .eq("user_id", applicant_id)
+            .execute()
+        )
+        if not existing_room_member.data:
+            supabase_admin.table("room_members").insert(
+                {"room_id": room_id, "user_id": applicant_id}
+            ).execute()
+
+    return {"message": "Join request accepted"}
+
+
+@router.post("/{group_id}/requests/{request_id}/decline", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def decline_join_request(
+    group_id: str,
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    """(방장 전용) 참가 신청 거절."""
+    get_group_or_404(supabase, group_id)
+    assert_group_admin(supabase, group_id, current_user["id"])
+
+    result = (
+        supabase.table("group_join_requests")
+        .update({"status": "declined"})
+        .eq("id", request_id)
+        .eq("study_group_id", group_id)
+        .eq("status", "pending")
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pending join request not found",
+        )
+
+    return {"message": "Join request declined"}
+
+
+@router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_200_OK)
+@handle_supabase_errors
+async def kick_member(
+    group_id: str,
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    """(방장 전용) 멤버 강퇴 — 스터디 그룹 + 채팅방에서 모두 제거."""
+    get_group_or_404(supabase, group_id)
+    assert_group_admin(supabase, group_id, current_user["id"])
+
+    if user_id == current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin cannot kick themselves",
+        )
+
+    target = (
+        supabase.table("user_study_groups")
+        .select("role")
+        .eq("study_group_id", group_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if not target.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found in this study group",
+        )
+    if target.data[0]["role"] == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot kick another admin",
+        )
+
+    # 스터디 그룹에서 제거
+    supabase.table("user_study_groups").delete().eq(
+        "study_group_id", group_id
+    ).eq("user_id", user_id).execute()
+
+    # 연결된 채팅방에서도 제거
+    room_result = (
+        supabase.table("chat_rooms")
+        .select("id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    if room_result.data:
+        room_id = room_result.data[0]["id"]
+        supabase.table("room_members").delete().eq(
+            "room_id", room_id
+        ).eq("user_id", user_id).execute()
+
+    return {"message": "Member has been removed from the group and chat room"}

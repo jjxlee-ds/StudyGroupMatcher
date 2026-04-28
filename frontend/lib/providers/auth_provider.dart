@@ -18,8 +18,12 @@ class AuthProvider extends ChangeNotifier {
     try {
       final data = await AuthService.login(nyuEmail: nyuEmail, password: password);
       final token = data['access_token'] as String;
+      final refreshToken = data['refresh_token'] as String?;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('access_token', token);
+      if (refreshToken != null) {
+        await prefs.setString('refresh_token', refreshToken);
+      }
       _user = User.fromJson(data['user']);
     } finally {
       _isLoading = false;
@@ -73,6 +77,7 @@ class AuthProvider extends ChangeNotifier {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('access_token');
+    await prefs.remove('refresh_token');
     _user = null;
     notifyListeners();
   }

@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
 class StudyGroupCreate(BaseModel):
     """Schema for creating a new study group."""
-    course_id: str = Field(..., description="class code of the course")
+    course_id: int = Field(..., description="course id")
     name: str = Field(..., min_length=1, description="Study group name")
     max_members: int = Field(ge=2, description="Maximum number of members")
     location: Optional[str] = Field(None, description="Meeting location")
@@ -24,12 +24,28 @@ class StudyGroupCreate(BaseModel):
 class StudyGroupResponse(BaseModel):
     """Schema for study group response."""
     id: str
-    course_id: str
+    course_id: int
     name: str
-    members: int
+    max_members: int
+    admin_id: Optional[str] = None
     location: Optional[str] = None
     created_at: Optional[datetime] = None
     current_members: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class GroupMemberResponse(BaseModel):
+    """Schema for a group member with their role."""
+    user_id: str
+    role: str  # "admin" | "member"
+    name: str
+    nyu_email: str
+    major: str
+    academic_standing: int
+    work_willingness: int
+    avg_gpa: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -43,7 +59,7 @@ class StudyGroupJoin(BaseModel):
 class StudyGroupRecommendation(BaseModel):
     """Schema for recommended study group with match score."""
     id: str
-    course_id: str
+    course_id: int
     name: str
     max_members: int
     location: Optional[str] = None

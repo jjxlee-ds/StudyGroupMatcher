@@ -13,27 +13,28 @@ class UserCourseService {
   }
 
   static Future<UserCourse> enroll({
-    required String nyuId,
     required int courseId,
-    required String semester,
-    required String currentCourseTimeStart,
-    required String currentCourseTimeEnd,
+    required String term,
+    required int year,
+    String? startTime,
+    String? endTime,
   }) async {
-    final response = await ApiClient.post('/user-courses/', body: {
-      'nyu_id': nyuId,
+    final body = <String, dynamic>{
       'course_id': courseId,
-      'semester': semester,
-      'current_course_time_start': currentCourseTimeStart,
-      'current_course_time_end': currentCourseTimeEnd,
-    });
+      'term': term,
+      'year': year,
+    };
+    if (startTime != null) body['start_time'] = startTime;
+    if (endTime != null) body['end_time'] = endTime;
+    final response = await ApiClient.post('/user-courses/', body: body);
     if (response.statusCode == 201) {
       return UserCourse.fromJson(jsonDecode(response.body));
     }
     throw Exception('Failed to enroll in course');
   }
 
-  static Future<void> unenroll(int enrollmentId) async {
-    final response = await ApiClient.delete('/user-courses/$enrollmentId');
+  static Future<void> unenroll(int courseId) async {
+    final response = await ApiClient.delete('/user-courses/?course_id=$courseId');
     if (response.statusCode != 204) {
       throw Exception('Failed to unenroll from course');
     }

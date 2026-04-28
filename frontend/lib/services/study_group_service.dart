@@ -31,7 +31,7 @@ class StudyGroupService {
   }
 
   static Future<StudyGroup> create({
-    required String courseId,
+    required int courseId,
     required String name,
     required int maxMembers,
     String? location,

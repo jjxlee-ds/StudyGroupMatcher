@@ -40,7 +40,7 @@ async def search_courses(
         .eq("course_code", normalized)
         .execute()
     )
-    return result.data or []
+    return result.data or [] 
 
 
 @router.get("/{course_id}", response_model=CourseResponse)

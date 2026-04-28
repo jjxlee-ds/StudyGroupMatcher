@@ -5,9 +5,11 @@ import '../models/course.dart';
 import '../models/study_group.dart';
 import '../services/course_service.dart';
 import '../services/study_group_service.dart';
+import '../services/chat_service.dart';
 import 'profile_screen.dart';
 import 'calendar_screen.dart';
 import 'chat_list_screen.dart';
+import 'chat_room_screen.dart';
 import 'recommendation_screen.dart';
 import 'group_detail_screen.dart';
 
@@ -531,6 +533,7 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
   static const Color primaryColor = Color(0xFF57068C);
 
   List<StudyGroup> _groups = [];
+  Map<String, String> _roomMap = {}; // group_id → room_id
   bool _loading = true;
   bool _showCreateForm = false;
 
@@ -555,10 +558,18 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
   Future<void> _loadGroups() async {
     setState(() => _loading = true);
     try {
-      final groups =
-          await StudyGroupService.getByCourse(widget.course.id.toString());
+      final results = await Future.wait([
+        StudyGroupService.getByCourse(widget.course.id.toString()),
+        ChatService.getRooms().catchError((_) => <Map<String, dynamic>>[]),
+      ]);
+      final groups = results[0] as List<StudyGroup>;
+      final rooms = results[1] as List<Map<String, dynamic>>;
+      final roomMap = <String, String>{
+        for (final r in rooms) r['group_id'] as String: r['id'] as String,
+      };
       setState(() {
         _groups = groups;
+        _roomMap = roomMap;
         _loading = false;
       });
     } catch (e) {
@@ -572,7 +583,7 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
     setState(() => _creating = true);
     try {
       await StudyGroupService.create(
-        courseId: widget.course.id.toString(),
+        courseId: widget.course.id,
         name: _nameController.text.trim(),
         maxMembers: _maxMembers,
         location: _locationController.text.trim().isEmpty
@@ -736,9 +747,27 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
   Widget _buildGroupCard(StudyGroup group) {
     final progress = (group.currentMembers ?? 0) / group.maxMembers;
     final isFull = (group.currentMembers ?? 0) >= group.maxMembers;
+    final roomId = _roomMap[group.id];
+    final isMember = roomId != null;
 
     return GestureDetector(
       onTap: () async {
+        if (isMember) {
+          final currentUserId =
+              Provider.of<AuthProvider>(context, listen: false).user?.id;
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ChatRoomScreen(
+                roomId: roomId,
+                groupId: group.id,
+                groupName: group.name,
+                memberCount: group.currentMembers ?? 0,
+                isAdmin: group.adminId != null && group.adminId == currentUserId,
+              ),
+            ),
+          );
+          return;
+        }
         final result = await Navigator.of(context).push<bool>(
           MaterialPageRoute(
             builder: (_) => GroupDetailScreen(
@@ -758,6 +787,9 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
+          border: isMember
+              ? Border.all(color: primaryColor.withAlpha(60), width: 1.5)
+              : null,
           boxShadow: [
             BoxShadow(
               color: Colors.black.withAlpha(8),
@@ -772,11 +804,13 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: const Color(0xFFE0E7FF),
+                color: isMember
+                    ? primaryColor.withAlpha(30)
+                    : const Color(0xFFE0E7FF),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(
-                Icons.groups,
+              child: Icon(
+                isMember ? Icons.chat_bubble : Icons.groups,
                 color: primaryColor,
                 size: 28,
               ),
@@ -786,12 +820,35 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    group.name,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          group.name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (isMember)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: primaryColor.withAlpha(20),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            'Member',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: primaryColor,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -843,9 +900,11 @@ class _CourseStudyGroupsScreenState extends State<CourseStudyGroupsScreen> {
                 ],
               ),
             ),
+            const SizedBox(width: 8),
             Icon(
-              Icons.chevron_right,
-              color: Colors.grey.shade400,
+              isMember ? Icons.arrow_forward_ios : Icons.chevron_right,
+              color: isMember ? primaryColor : Colors.grey.shade400,
+              size: isMember ? 16 : 24,
             ),
           ],
         ),

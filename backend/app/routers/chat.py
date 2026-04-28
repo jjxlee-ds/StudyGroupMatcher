@@ -1,11 +1,9 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from jose import JWTError, jwt
 from supabase import Client
 
-from app.config import get_settings
-from app.database import get_supabase
+from app.database import get_supabase, get_supabase_admin
 from app.dependencies import get_current_user
 from app.schemas.chat import ChatRoomCreate, ChatRoomResponse, MessageResponse
 from app.services.chat_service import (
@@ -15,6 +13,7 @@ from app.services.chat_service import (
     get_user_rooms,
     insert_message,
 )
+from app.services.schedule_service import assert_group_member
 from app.services.utils import handle_supabase_errors
 from app.ws.connection_manager import ConnectionManager
 
@@ -26,10 +25,10 @@ manager = ConnectionManager()
 @handle_supabase_errors
 async def list_my_rooms(
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> List[ChatRoomResponse]:
     """내가 속한 채팅방 목록."""
-    return get_user_rooms(supabase, current_user["id"])
+    return get_user_rooms(supabase_admin, current_user["id"])
 
 
 @router.post("/rooms", response_model=ChatRoomResponse, status_code=status.HTTP_201_CREATED)
@@ -37,10 +36,13 @@ async def list_my_rooms(
 async def create_chat_room(
     request: ChatRoomCreate,
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> ChatRoomResponse:
     """스터디 그룹에 채팅방 생성."""
-    return create_room(supabase, request.group_id, current_user["id"])
+    assert_group_member(supabase_admin, request.group_id, current_user["id"])
+    group_result = supabase_admin.table("study_groups").select("name").eq("id", request.group_id).execute()
+    group_name = group_result.data[0]["name"] if group_result.data else ""
+    return create_room(supabase_admin, request.group_id, current_user["id"], name=group_name)
 
 
 @router.get("/rooms/{room_id}/messages", response_model=List[MessageResponse])
@@ -50,15 +52,15 @@ async def get_room_messages(
     limit: int = Query(default=50, ge=1, le=100),
     before: Optional[str] = Query(default=None, description="커서 페이지네이션용 ISO timestamp"),
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> List[MessageResponse]:
     """메시지 히스토리 조회 (커서 페이지네이션)."""
-    if not check_room_membership(supabase, room_id, current_user["id"]):
+    if not check_room_membership(supabase_admin, room_id, current_user["id"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this room",
         )
-    return get_messages(supabase, room_id, limit, before)
+    return get_messages(supabase_admin, room_id, limit, before)
 
 
 @router.websocket("/ws/rooms/{room_id}")
@@ -73,25 +75,18 @@ async def websocket_chat(
     수신 페이로드: {"content": "메시지 내용"}
     발신 페이로드: {"id": "...", "room_id": "...", "sender_id": "...", "content": "...", "created_at": "..."}
     """
-    settings = get_settings()
+    supabase_admin = get_supabase_admin()
 
-    # 1. JWT 검증
+    # 1. JWT 검증 — supabase.auth.get_user() uses algorithm-agnostic verification
     try:
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-        user_id: str = payload["sub"]
-    except JWTError:
+        user_response = supabase_admin.auth.get_user(token)
+        user_id: str = user_response.user.id
+    except Exception:
         await websocket.close(code=4001)
         return
 
-    supabase = get_supabase()
-
     # 2. 채팅방 멤버 권한 확인
-    if not check_room_membership(supabase, room_id, user_id):
+    if not check_room_membership(supabase_admin, room_id, user_id):
         await websocket.close(code=4003)
         return
 
@@ -105,7 +100,7 @@ async def websocket_chat(
             if not content:
                 continue
 
-            message = insert_message(supabase, room_id, user_id, content)
+            message = insert_message(supabase_admin, room_id, user_id, content)
 
             await manager.broadcast(room_id, {
                 "id": message["id"],

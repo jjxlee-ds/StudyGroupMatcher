@@ -28,7 +28,7 @@ class AuthService {
     if (minor != null) body['minor'] = minor;
     if (preferredLocation != null) body['preferred_location'] = preferredLocation;
     if (timePreference != null) body['time_preference'] = timePreference;
-    if (gpa != null) body['gpa'] = gpa;
+    if (gpa != null) body['avg_gpa'] = gpa;
 
     final response = await ApiClient.post('/auth/signup', body: body, withAuth: false);
     if (response.statusCode == 201) {

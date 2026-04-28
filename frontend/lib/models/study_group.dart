@@ -1,11 +1,12 @@
 class StudyGroup {
   final String id;
-  final String courseId;
+  final int courseId;
   final String name;
   final int maxMembers;
   final String? location;
   final String? createdAt;
   final int? currentMembers;
+  final String? adminId;
 
   StudyGroup({
     required this.id,
@@ -15,29 +16,32 @@ class StudyGroup {
     this.location,
     this.createdAt,
     this.currentMembers,
+    this.adminId,
   });
 
   factory StudyGroup.fromJson(Map<String, dynamic> json) {
     return StudyGroup(
       id: json['id'] as String,
-      courseId: json['course_id'] as String,
+      courseId: json['course_id'] as int,
       name: json['name'] as String,
       maxMembers: json['max_members'] as int,
       location: json['location'] as String?,
       createdAt: json['created_at'] as String?,
       currentMembers: json['current_members'] as int?,
+      adminId: json['admin_id'] as String?,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'course_id': courseId,
+      'course_id': courseId,  // int
       'name': name,
       'max_members': maxMembers,
       'location': location,
       'created_at': createdAt,
       'current_members': currentMembers,
+      'admin_id': adminId,
     };
   }
 }
@@ -67,7 +71,7 @@ class ScoreBreakdown {
 
 class StudyGroupRecommendation {
   final String id;
-  final String courseId;
+  final int courseId;
   final String name;
   final int maxMembers;
   final String? location;
@@ -91,7 +95,7 @@ class StudyGroupRecommendation {
   factory StudyGroupRecommendation.fromJson(Map<String, dynamic> json) {
     return StudyGroupRecommendation(
       id: json['id'] as String,
-      courseId: json['course_id'] as String,
+      courseId: json['course_id'] as int,
       name: json['name'] as String,
       maxMembers: json['max_members'] as int,
       location: json['location'] as String?,

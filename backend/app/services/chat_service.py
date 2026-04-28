@@ -25,20 +25,30 @@ def check_room_membership(supabase: Client, room_id: str, user_id: str) -> bool:
     return bool(result.data)
 
 
-def create_room(supabase: Client, group_id: str, creator_id: str) -> dict:
+def create_room(supabase: Client, group_id: str, creator_id: str, name: str = "") -> dict:
     existing = (
         supabase.table("chat_rooms")
-        .select("id")
+        .select("*")
         .eq("group_id", group_id)
         .execute()
     )
     if existing.data:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Chat room already exists for this group",
+        # Room already exists — ensure the user is a member
+        room_id = existing.data[0]["id"]
+        already_member = (
+            supabase.table("room_members")
+            .select("user_id")
+            .eq("room_id", room_id)
+            .eq("user_id", creator_id)
+            .execute()
         )
+        if not already_member.data:
+            supabase.table("room_members").insert(
+                {"room_id": room_id, "user_id": creator_id}
+            ).execute()
+        return existing.data[0]
 
-    result = supabase.table("chat_rooms").insert({"group_id": group_id}).execute()
+    result = supabase.table("chat_rooms").insert({"group_id": group_id, "name": name}).execute()
     if not result.data:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -1,771 +1,457 @@
 import 'package:flutter/material.dart';
+
 import '../models/study_group.dart';
 import '../services/study_group_service.dart';
-import 'home_screen.dart';
-import 'profile_screen.dart';
-import 'calendar_screen.dart';
-import 'chat_list_screen.dart';
+import '../theme/app_theme.dart';
 
 class RecommendationScreen extends StatefulWidget {
-  const RecommendationScreen({super.key});
+  final VoidCallback? onGroupJoined;
+
+  const RecommendationScreen({super.key, this.onGroupJoined});
 
   @override
   State<RecommendationScreen> createState() => _RecommendationScreenState();
 }
 
 class _RecommendationScreenState extends State<RecommendationScreen> {
-  static const Color primaryColor = Color(0xFF57068C);
-  static const Color backgroundLight = Color(0xFFF8FAFC);
-
-  List<StudyGroupRecommendation> _recommendations = [];
+  List<StudyGroupRecommendation> _recs = [];
   bool _loading = true;
-  int _currentIndex = 0;
+  StudyGroupRecommendation? _selectedRec;
 
   @override
   void initState() {
     super.initState();
-    _loadRecommendations();
+    _load();
   }
 
-  Future<void> _loadRecommendations() async {
+  Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final recommendations = await StudyGroupService.getRecommendations(limit: 20);
-      if (mounted) {
-        setState(() {
-          _recommendations = recommendations;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load recommendations: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      final recs = await StudyGroupService.getRecommendations(limit: 30);
+      if (mounted) setState(() { _recs = recs; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _nextRecommendation() {
-    if (_currentIndex < _recommendations.length - 1) {
-      setState(() => _currentIndex++);
-    }
-  }
-
-  void _previousRecommendation() {
-    if (_currentIndex > 0) {
-      setState(() => _currentIndex--);
-    }
-  }
-
-  Future<void> _joinGroup(StudyGroupRecommendation group) async {
+  Future<void> _join(StudyGroupRecommendation rec) async {
     try {
-      await StudyGroupService.join(group.id);
+      await StudyGroupService.join(rec.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Joined ${group.name}!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _nextRecommendation();
+        _showSnack('Join request sent for "${rec.name}"! Awaiting admin approval.', success: true);
+        widget.onGroupJoined?.call();
+        setState(() => _selectedRec = null);
+        await _load();
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to join: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (mounted) _showSnack(e.toString().replaceFirst('Exception: ', ''), success: false);
     }
+  }
+
+  void _showSnack(String msg, {required bool success}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: success ? AppColors.success : AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: backgroundLight,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(
-              child: _loading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: primaryColor))
-                  : _recommendations.isEmpty
-                      ? _buildEmptyState()
-                      : _buildGroupDetails(_recommendations[_currentIndex]),
-            ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _buildBottomNavBar(context),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back_ios_new),
-          ),
-          Column(
-            children: [
-              const Text(
-                'Group Details',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (_recommendations.isNotEmpty)
-                Text(
-                  '${_currentIndex + 1} of ${_recommendations.length}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade500,
-                  ),
-                ),
-            ],
-          ),
-          IconButton(
-            onPressed: () {
-              // TODO: Settings/filters
-            },
-            icon: const Icon(Icons.tune),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.search_off,
-              size: 80,
-              color: Colors.grey.shade300,
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'No recommendations yet',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Enroll in courses to get study group recommendations',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.shade500,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _getInitials(String name) {
-    final words = name.split(' ');
-    if (words.length >= 2) {
-      return '${words[0][0]}${words[1][0]}'.toUpperCase();
-    }
-    return name.length >= 2 ? name.substring(0, 2).toUpperCase() : name.toUpperCase();
-  }
-
-  String _formatCreatedAt(String? createdAt) {
-    if (createdAt == null) return 'Recently';
-    try {
-      final date = DateTime.parse(createdAt);
-      final now = DateTime.now();
-      final diff = now.difference(date);
-      if (diff.inDays > 7) {
-        return '${(diff.inDays / 7).floor()} weeks ago';
-      } else if (diff.inDays > 0) {
-        return '${diff.inDays} days ago';
-      } else if (diff.inHours > 0) {
-        return '${diff.inHours} hours ago';
-      }
-      return 'Just now';
-    } catch (_) {
-      return 'Recently';
-    }
-  }
-
-  Widget _buildGroupDetails(StudyGroupRecommendation group) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        children: [
-          // Group header
-          _buildGroupHeader(group),
-          const SizedBox(height: 32),
-          // Match Score Card
-          _buildMatchScoreCard(group),
-          // Info cards
-          _buildMemberCard(group),
-          _buildScoreBreakdownCard(group),
-          _buildInfoCard(
-            icon: Icons.location_on,
-            iconColor: const Color(0xFFDC2626),
-            bgColor: const Color(0xFFFEF2F2),
-            label: 'LOCATION',
-            value: group.location ?? 'Not specified',
-          ),
-          const SizedBox(height: 32),
-          // Action buttons
-          _buildJoinButton(group),
-          const SizedBox(height: 12),
-          _buildNavigationButtons(),
-          const SizedBox(height: 24),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGroupHeader(StudyGroupRecommendation group) {
-    return Row(
+    return Column(
       children: [
-        Container(
-          width: 96,
-          height: 96,
-          decoration: BoxDecoration(
-            color: const Color(0xFFE0E7FF),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withAlpha(20),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Center(
-            child: Text(
-              _getInitials(group.name),
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: primaryColor,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 20),
+        _buildTopBar(),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                group.name,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  height: 1.2,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Created ${_formatCreatedAt(group.createdAt)}',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey.shade500,
-                ),
-              ),
-            ],
-          ),
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+              : _recs.isEmpty
+                  ? _buildEmpty()
+                  : _selectedRec != null
+                      ? _buildDetailView(_selectedRec!)
+                      : _buildGrid(),
         ),
       ],
     );
   }
 
-  Widget _buildInfoCard({
-    required IconData icon,
-    required Color iconColor,
-    required Color bgColor,
-    required String label,
-    required String value,
-  }) {
+  Widget _buildTopBar() {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(8),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.borderLight)),
       ),
       child: Row(
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: iconColor, size: 22),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Recommendations', style: AppText.headingLarge),
+              const SizedBox(height: 2),
+              Text(
+                '${_recs.length} groups matched to your profile',
+                style: AppText.bodyMedium,
+              ),
+            ],
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade500,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          const Spacer(),
+          _TopBarButton(icon: Icons.refresh_rounded, label: 'Refresh', onTap: _load),
         ],
       ),
     );
   }
 
-  Widget _buildMemberCard(StudyGroupRecommendation group) {
-    final progress = group.currentMembers / group.maxMembers;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(8),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+  Widget _buildGrid() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(32, 24, 32, 40),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1100),
+        child: GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 340,
+            mainAxisExtent: 200,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
           ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFECFDF5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.group, color: Color(0xFF059669), size: 22),
+          itemCount: _recs.length,
+          itemBuilder: (_, i) => _RecCard(
+            rec: _recs[i],
+            colorIndex: i % AppColors.avatarPalette.length,
+            onTap: () => setState(() => _selectedRec = _recs[i]),
+            onJoin: () => _join(_recs[i]),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'CURRENT MEMBERS',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade500,
-                    letterSpacing: 1,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Text(
-                      '${group.currentMembers} / ${group.maxMembers} members',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const Spacer(),
-                    SizedBox(
-                      width: 64,
-                      height: 8,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: progress,
-                          backgroundColor: Colors.grey.shade200,
-                          valueColor: const AlwaysStoppedAnimation<Color>(
-                            Color(0xFF10B981),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMatchScoreCard(StudyGroupRecommendation group) {
-    final scorePercent = group.matchScore;
-    Color scoreColor;
-    String scoreLabel;
-
-    if (scorePercent >= 80) {
-      scoreColor = const Color(0xFF10B981);
-      scoreLabel = 'Excellent Match';
-    } else if (scorePercent >= 60) {
-      scoreColor = const Color(0xFF3B82F6);
-      scoreLabel = 'Good Match';
-    } else if (scorePercent >= 40) {
-      scoreColor = const Color(0xFFF59E0B);
-      scoreLabel = 'Fair Match';
-    } else {
-      scoreColor = const Color(0xFFEF4444);
-      scoreLabel = 'Low Match';
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [scoreColor.withAlpha(20), scoreColor.withAlpha(10)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scoreColor.withAlpha(50)),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: scoreColor.withAlpha(30),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                '${scorePercent.toInt()}',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: scoreColor,
-                ),
+    );
+  }
+
+  Widget _buildDetailView(StudyGroupRecommendation rec) {
+    final pct = rec.matchScore.round();
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(32, 24, 32, 40),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: () => setState(() => _selectedRec = null),
+              child: Row(
+                children: const [
+                  Icon(Icons.arrow_back_rounded, size: 18, color: AppColors.textSecondary),
+                  SizedBox(width: 6),
+                  Text('All recommendations', style: AppText.bodyMedium),
+                ],
               ),
             ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'MATCH SCORE',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade600,
-                    letterSpacing: 1,
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.borderLight),
+                boxShadow: [BoxShadow(color: Colors.black.withAlpha(6), blurRadius: 10, offset: const Offset(0, 3))],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _GroupAvatar(name: rec.name, size: 52, colorIndex: 0),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(rec.name, style: AppText.headingMedium),
+                            const SizedBox(height: 4),
+                            _InfoRow(icon: Icons.people_outline, label: '${rec.currentMembers} / ${rec.maxMembers} members'),
+                            if (rec.location != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: _InfoRow(icon: Icons.location_on_outlined, label: rec.location!),
+                              ),
+                          ],
+                        ),
+                      ),
+                      _MatchBadge(pct: pct, large: true),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  scoreLabel,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: scoreColor,
+                  const SizedBox(height: 24),
+                  const Text('MATCH BREAKDOWN', style: AppText.label),
+                  const SizedBox(height: 14),
+                  _ScoreRow('Study Intensity', rec.scoreBreakdown.workWillingness, Icons.local_fire_department_outlined),
+                  _ScoreRow('GPA Alignment', rec.scoreBreakdown.gpa, Icons.school_outlined),
+                  _ScoreRow('Location Match', rec.scoreBreakdown.location, Icons.location_on_outlined),
+                  _ScoreRow('Schedule Match', rec.scoreBreakdown.timePreference, Icons.schedule_outlined),
+                  const SizedBox(height: 28),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => _join(rec),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'Request to Join',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: scorePercent / 100,
-                    backgroundColor: Colors.grey.shade200,
-                    valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
-                    minHeight: 6,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildScoreBreakdownCard(StudyGroupRecommendation group) {
-    final breakdown = group.scoreBreakdown;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(8),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+  Widget _buildEmpty() {
+    return Center(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            'SCORE BREAKDOWN',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade500,
-              letterSpacing: 1,
-            ),
+          Container(
+            width: 64, height: 64,
+            decoration: const BoxDecoration(color: AppColors.primaryLight, shape: BoxShape.circle),
+            child: const Icon(Icons.auto_awesome, color: AppColors.primary, size: 32),
           ),
-          const SizedBox(height: 12),
-          _buildScoreRow('Work Willingness', breakdown.workWillingness, 50, const Color(0xFFEA580C)),
-          _buildScoreRow('GPA Match', breakdown.gpa, 30, const Color(0xFF9333EA)),
-          _buildScoreRow('Location', breakdown.location, 10, const Color(0xFFDC2626)),
-          _buildScoreRow('Time Preference', breakdown.timePreference, 10, const Color(0xFFCA8A04)),
+          const SizedBox(height: 20),
+          const Text('No recommendations yet', style: AppText.headingMedium),
+          const SizedBox(height: 8),
+          const Text(
+            'Enroll in courses on your profile to get matched.',
+            style: AppText.bodyMedium, textAlign: TextAlign.center,
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildScoreRow(String label, double score, int maxScore, Color color) {
+// ─── Rec card ─────────────────────────────────────────────────────────────────
+
+class _RecCard extends StatefulWidget {
+  final StudyGroupRecommendation rec;
+  final int colorIndex;
+  final VoidCallback onTap;
+  final VoidCallback onJoin;
+
+  const _RecCard({required this.rec, required this.colorIndex, required this.onTap, required this.onJoin});
+
+  @override
+  State<_RecCard> createState() => _RecCardState();
+}
+
+class _RecCardState extends State<_RecCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = widget.rec.matchScore.round();
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _hovered ? AppColors.primary.withAlpha(60) : AppColors.borderLight),
+            boxShadow: _hovered
+                ? [BoxShadow(color: AppColors.primary.withAlpha(18), blurRadius: 14, offset: const Offset(0, 4))]
+                : [BoxShadow(color: Colors.black.withAlpha(5), blurRadius: 6, offset: const Offset(0, 2))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _GroupAvatar(name: widget.rec.name, size: 36, colorIndex: widget.colorIndex),
+                  const Spacer(),
+                  _MatchBadge(pct: pct),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(widget.rec.name, style: AppText.headingSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(Icons.people_outline, size: 12, color: AppColors.textMuted),
+                  const SizedBox(width: 3),
+                  Text('${widget.rec.currentMembers}/${widget.rec.maxMembers}', style: AppText.bodySmall.copyWith(fontSize: 12)),
+                  if (widget.rec.location != null) ...[
+                    const SizedBox(width: 8),
+                    const Icon(Icons.location_on_outlined, size: 12, color: AppColors.textMuted),
+                    const SizedBox(width: 3),
+                    Expanded(
+                      child: Text(widget.rec.location!, style: AppText.bodySmall.copyWith(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ],
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: widget.onJoin,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+                    elevation: 0,
+                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  child: const Text('Request to Join'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Match badge ──────────────────────────────────────────────────────────────
+
+class _MatchBadge extends StatelessWidget {
+  final int pct;
+  final bool large;
+  const _MatchBadge({required this.pct, this.large = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = pct >= 80 ? AppColors.success : pct >= 60 ? AppColors.warning : AppColors.error;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: large ? 14 : 10, vertical: large ? 6 : 4),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Text('$pct% match', style: TextStyle(fontSize: large ? 14 : 12, fontWeight: FontWeight.bold, color: color)),
+    );
+  }
+}
+
+// ─── Group avatar ─────────────────────────────────────────────────────────────
+
+class _GroupAvatar extends StatelessWidget {
+  final String name;
+  final double size;
+  final int colorIndex;
+  const _GroupAvatar({required this.name, required this.size, required this.colorIndex});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppColors.avatarPalette[colorIndex % AppColors.avatarPalette.length];
+    return Container(
+      width: size, height: size,
+      decoration: BoxDecoration(color: palette[0], borderRadius: BorderRadius.circular(size * 0.24)),
+      child: Center(
+        child: Text(
+          name.substring(0, 1).toUpperCase(),
+          style: TextStyle(fontSize: size * 0.38, fontWeight: FontWeight.bold, color: palette[1]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Score row ────────────────────────────────────────────────────────────────
+
+class _ScoreRow extends StatelessWidget {
+  final String label;
+  final double score;
+  final IconData icon;
+  const _ScoreRow(this.label, this.score, this.icon);
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = score.round();
+    final color = pct >= 80 ? AppColors.success : pct >= 50 ? AppColors.warning : AppColors.error;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-          ),
+          Icon(icon, size: 15, color: AppColors.textMuted),
+          const SizedBox(width: 10),
+          SizedBox(width: 140, child: Text(label, style: AppText.bodyMedium.copyWith(fontSize: 13))),
           Expanded(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: score / maxScore,
-                backgroundColor: Colors.grey.shade200,
+                value: score,
+                backgroundColor: AppColors.borderLight,
                 valueColor: AlwaysStoppedAnimation<Color>(color),
-                minHeight: 8,
+                minHeight: 6,
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           SizedBox(
-            width: 45,
-            child: Text(
-              '${score.toInt()}/$maxScore',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey.shade600,
-              ),
-              textAlign: TextAlign.right,
-            ),
+            width: 36,
+            child: Text('$pct%', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color), textAlign: TextAlign.right),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildJoinButton(StudyGroupRecommendation group) {
-    final isFull = group.currentMembers >= group.maxMembers;
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _InfoRow({required this.icon, required this.label});
 
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: isFull ? null : () => _joinGroup(group),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primaryColor,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: Colors.grey.shade300,
-          padding: const EdgeInsets.symmetric(vertical: 18),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: 8,
-          shadowColor: primaryColor.withAlpha(80),
-        ),
-        child: Text(
-          isFull ? 'Group Full' : 'Join Group Chat',
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNavigationButtons() {
+  @override
+  Widget build(BuildContext context) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: _currentIndex > 0 ? _previousRecommendation : null,
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Previous'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.grey.shade700,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              side: BorderSide(color: Colors.grey.shade300),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: _currentIndex < _recommendations.length - 1
-                ? _nextRecommendation
-                : null,
-            icon: const Icon(Icons.arrow_forward),
-            label: const Text('Skip'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.grey.shade700,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              side: BorderSide(color: Colors.grey.shade300),
-            ),
-          ),
-        ),
+        Icon(icon, size: 13, color: AppColors.textMuted),
+        const SizedBox(width: 4),
+        Text(label, style: AppText.bodySmall.copyWith(fontSize: 13)),
       ],
     );
   }
+}
 
-  Widget _buildBottomNavBar(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(color: Colors.grey.shade200),
+class _TopBarButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _TopBarButton({required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16, color: AppColors.textSecondary),
+      label: Text(label, style: AppText.bodyMedium),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: AppColors.border),
         ),
-      ),
-      padding: const EdgeInsets.only(left: 8, right: 8, top: 12, bottom: 32),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _buildNavItem(
-            icon: Icons.auto_awesome,
-            label: 'Recs',
-            isActive: true,
-            onTap: () {},
-          ),
-          _buildNavItem(
-            icon: Icons.chat_bubble_outline,
-            label: 'Chatting',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const ChatListScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.home_outlined,
-            label: 'Home',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const HomeScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.calendar_today,
-            label: 'Calendar',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const CalendarScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.person_outline,
-            label: 'Profile',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavItem({
-    required IconData icon,
-    required String label,
-    required bool isActive,
-    required VoidCallback onTap,
-  }) {
-    final color = isActive ? primaryColor : Colors.grey.shade400;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 26),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-              color: color,
-            ),
-          ),
-        ],
       ),
     );
   }

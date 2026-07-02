@@ -90,6 +90,13 @@ async def websocket_chat(
         await websocket.close(code=4003)
         return
 
+    # Resolve sender name once at connect time
+    try:
+        name_result = supabase_admin.table("users").select("name").eq("id", user_id).maybe_single().execute()
+        sender_name: str | None = name_result.data.get("name") if name_result.data else None
+    except Exception:
+        sender_name = None
+
     # 3. 연결 등록
     await manager.connect(room_id, websocket)
 
@@ -106,6 +113,7 @@ async def websocket_chat(
                 "id": message["id"],
                 "room_id": message["room_id"],
                 "sender_id": message["sender_id"],
+                "sender_name": sender_name,
                 "content": message["content"],
                 "created_at": message["created_at"],
             })

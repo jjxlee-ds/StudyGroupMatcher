@@ -220,23 +220,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               letterSpacing: -0.5,
             ),
           ),
-          GestureDetector(
-            onTap: () {
-              // TODO: Settings
-            },
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.transparent,
-              ),
-              child: Icon(
-                Icons.settings,
-                size: 26,
-                color: Colors.grey.shade700,
-              ),
-            ),
-          ),
+          const SizedBox(width: 40),
         ],
       ),
     );

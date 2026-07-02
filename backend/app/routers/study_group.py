@@ -457,7 +457,8 @@ async def get_my_study_groups(
 async def get_recommended_study_groups(
     limit: int = Query(default=10, ge=1, le=50, description="Maximum number of recommendations"),
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> List[StudyGroupRecommendation]:
     """
     Get personalized study group recommendations for the current user.
@@ -470,19 +471,6 @@ async def get_recommended_study_groups(
 
     Groups are scored based on the average of current members' attributes.
     """
-    # Get user's enrolled courses
-    user_courses = (
-        supabase.table("user_courses")
-        .select("course_id")
-        .eq("user_id", current_user["id"])
-        .execute()
-    )
-
-    if not user_courses.data:
-        return []
-
-    course_ids = [c["course_id"] for c in user_courses.data]
-
     # Get groups user already belongs to
     my_memberships = (
         supabase.table("user_study_groups")
@@ -492,72 +480,68 @@ async def get_recommended_study_groups(
     )
     my_group_ids = {m["study_group_id"] for m in (my_memberships.data or [])}
 
-    # Get all study groups for user's courses
-    groups_result = (
-        supabase.table("study_groups")
-        .select("*, user_study_groups(count)")
-        .in_("course_id", course_ids)
+    # Get user's enrolled courses
+    user_courses = (
+        supabase.table("user_courses")
+        .select("course_id")
+        .eq("user_id", current_user["id"])
         .execute()
     )
+    course_ids = [c["course_id"] for c in (user_courses.data or [])]
 
-    if not groups_result.data:
-        return []
+    def _score_groups(groups: list[dict]) -> list[dict]:
+        results = []
+        for group in groups:
+            group_id = group["id"]
+            if group_id in my_group_ids:
+                continue
+            metadata_group = _attach_group_metadata(supabase, [group])[0]
+            current_members = metadata_group["current_members"]
+            if current_members >= group.get("max_members", 0):
+                continue
+            members_result = (
+                supabase_admin.table("user_study_groups")
+                .select("user_id, users(work_willingness, avg_gpa, preferred_location, time_preference)")
+                .eq("study_group_id", group_id)
+                .execute()
+            )
+            members = [m["users"] for m in (members_result.data or []) if m.get("users")]
+            group_averages = calculate_member_averages(members)
+            total_score, breakdown = calculate_total_score(current_user, group_averages)
+            results.append({
+                "id": group["id"],
+                "course_id": group["course_id"],
+                "name": group["name"],
+                "max_members": group["max_members"],
+                "location": group.get("location"),
+                "created_at": group.get("created_at"),
+                "current_members": current_members,
+                "admin_id": metadata_group.get("admin_id"),
+                "match_score": total_score,
+                "score_breakdown": breakdown,
+            })
+        results.sort(key=lambda x: x["match_score"], reverse=True)
+        return results
 
-    recommendations = []
-
-    for group in groups_result.data:
-        group_id = group["id"]
-
-        # Skip groups user already belongs to
-        if group_id in my_group_ids:
-            continue
-
-        # Get current member count
-        metadata_group = _attach_group_metadata(supabase, [group])[0]
-        current_members = metadata_group["current_members"]
-
-        # Skip full groups
-        if current_members >= group.get("max_members", 0):
-            continue
-
-        # Get member details for this group
-        members_result = (
-            supabase.table("user_study_groups")
-            .select("user_id, users(work_willingness, avg_gpa, preferred_location, time_preference)")
-            .eq("study_group_id", group_id)
+    # Primary: groups for enrolled courses
+    if course_ids:
+        course_groups = (
+            supabase.table("study_groups")
+            .select("*, user_study_groups(count)")
+            .in_("course_id", course_ids)
             .execute()
         )
+        recommendations = _score_groups(course_groups.data or [])
+        if recommendations:
+            return recommendations[:limit]
 
-        # Extract user data from nested structure
-        members = []
-        for m in (members_result.data or []):
-            user_data = m.get("users")
-            if user_data:
-                members.append(user_data)
-
-        # Calculate group averages
-        group_averages = calculate_member_averages(members)
-
-        # Calculate match score
-        total_score, breakdown = calculate_total_score(current_user, group_averages)
-
-        recommendations.append({
-            "id": group["id"],
-            "course_id": group["course_id"],
-            "name": group["name"],
-            "max_members": group["max_members"],
-            "location": group.get("location"),
-            "created_at": group.get("created_at"),
-            "current_members": current_members,
-            "admin_id": metadata_group.get("admin_id"),
-            "match_score": total_score,
-            "score_breakdown": breakdown
-        })
-
-    # Sort by match_score descending
-    recommendations.sort(key=lambda x: x["match_score"], reverse=True)
-
-    return recommendations[:limit]
+    # Fallback: any joinable group across all courses
+    all_groups = (
+        supabase.table("study_groups")
+        .select("*, user_study_groups(count)")
+        .execute()
+    )
+    return _score_groups(all_groups.data or [])[:limit]
 
 
 @router.get("/{group_id}/members", response_model=List[GroupMemberResponse])
@@ -566,13 +550,14 @@ async def get_group_members(
     group_id: str,
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> List[GroupMemberResponse]:
     """그룹 멤버 목록 조회. role 포함 — admin이 방장."""
     from app.services.schedule_service import assert_group_member
     assert_group_member(supabase, group_id, current_user["id"])
 
     result = (
-        supabase.table("user_study_groups")
+        supabase_admin.table("user_study_groups")
         .select("role, users(id, name, nyu_email, major, academic_standing, work_willingness, avg_gpa)")
         .eq("study_group_id", group_id)
         .execute()
@@ -603,13 +588,14 @@ async def get_join_requests(
     group_id: str,
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ) -> List[JoinRequestResponse]:
     """(방장 전용) 참가 신청 목록 조회 — 신청자 개인 정보 포함."""
     get_group_or_404(supabase, group_id)
     assert_group_admin(supabase, group_id, current_user["id"])
 
     requests_result = (
-        supabase.table("group_join_requests")
+        supabase_admin.table("group_join_requests")
         .select("*, users(*)")
         .eq("study_group_id", group_id)
         .eq("status", "pending")

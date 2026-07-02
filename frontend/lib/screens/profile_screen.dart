@@ -1,173 +1,162 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/user.dart';
+
 import '../models/course.dart';
+import '../models/user.dart';
 import '../providers/auth_provider.dart';
-import '../services/user_service.dart';
-import '../services/user_course_service.dart';
 import '../services/course_service.dart';
-import 'auth/login_screen.dart';
-import 'courses/course_list_screen.dart';
-import 'calendar_screen.dart';
-import 'chat_list_screen.dart';
-import 'home_screen.dart';
-import 'recommendation_screen.dart';
+import '../services/user_course_service.dart';
+import '../services/user_service.dart';
+import '../theme/app_theme.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final VoidCallback? onGroupsChanged;
+
+  const ProfileScreen({super.key, this.onGroupsChanged});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  static const Color primaryColor = Color(0xFF2C097F);
-  static const Color backgroundLight = Color(0xFFF6F6F8);
-
-  List<Course> _enrolledCourses = [];
+  List<Course> _courses = [];
   bool _loadingCourses = true;
 
   @override
   void initState() {
     super.initState();
-    _loadEnrolledCourses();
+    _loadCourses();
   }
 
-  Future<void> _loadEnrolledCourses() async {
+  Future<void> _loadCourses() async {
     try {
       final userCourses = await UserCourseService.getMyCourses();
       final allCourses = await CourseService.getAll();
-      final courseIds = userCourses.map((uc) => uc.courseId).toSet();
-      setState(() {
-        _enrolledCourses =
-            allCourses.where((c) => courseIds.contains(c.id)).toList();
-        _loadingCourses = false;
-      });
-    } catch (e) {
-      setState(() => _loadingCourses = false);
+      final ids = userCourses.map((uc) => uc.courseId).toSet();
+      if (mounted) {
+        setState(() {
+          _courses = allCourses.where((c) => ids.contains(c.id)).toList();
+          _loadingCourses = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingCourses = false);
     }
   }
 
-  String _getGraduationYear(int academicStanding) {
-    final currentYear = DateTime.now().year;
-    return (currentYear + (5 - academicStanding)).toString();
+  void _openCourseManager(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 48, vertical: 32),
+        child: SizedBox(
+          width: 540,
+          height: MediaQuery.of(context).size.height * 0.80,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: _CourseManagerDialog(onDone: () {
+              Navigator.of(context).pop();
+              _loadCourses();
+            }),
+          ),
+        ),
+      ),
+    );
   }
 
-  String _getStandingLabel(int standing) {
-    switch (standing) {
-      case 1:
-        return 'Freshman';
-      case 2:
-        return 'Sophomore';
-      case 3:
-        return 'Junior';
-      case 4:
-        return 'Senior';
-      default:
-        return 'Student';
-    }
+  String _standingLabel(int s) => const {1: 'Freshman', 2: 'Sophomore', 3: 'Junior', 4: 'Senior'}[s] ?? 'Student';
+
+  String _gradYear(int s) {
+    final y = DateTime.now().year + (4 - (s - 1));
+    return y.toString();
+  }
+
+  void _showEditSheet(User user) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: SizedBox(
+          width: 520,
+          child: EditProfileSheet(
+            user: user,
+            onSaved: () {
+              Navigator.pop(context);
+              _loadCourses();
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user!;
 
-    return Scaffold(
-      backgroundColor: backgroundLight,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(context),
-            // Scrollable Content
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 100),
-                child: Column(
-                  children: [
-                    // Profile Info
-                    _buildProfileInfo(user),
-                    const SizedBox(height: 24),
-                    // Sections
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Column(
-                        children: [
-                          // My Courses
-                          _buildCoursesSection(),
-                          const SizedBox(height: 24),
-                          // Account Settings
-                          _buildAccountSettingsSection(context, user),
-                          const SizedBox(height: 32),
-                          // Logout Button
-                          _buildLogoutButton(context),
-                          const SizedBox(height: 48),
-                        ],
-                      ),
+    return Column(
+      children: [
+        _buildTopBar(user),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(32, 24, 32, 40),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Left: profile card
+                  SizedBox(width: 280, child: _buildProfileCard(user)),
+                  const SizedBox(width: 24),
+                  // Right: courses + preferences
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _buildCoursesCard(),
+                        const SizedBox(height: 20),
+                        _buildPreferencesCard(user),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
-      ),
-      // Bottom Navigation Bar
-      bottomNavigationBar: _buildBottomNavBar(context),
+      ],
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildTopBar(User user) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          bottom: BorderSide(
-            color: primaryColor.withOpacity(0.1),
-            width: 1,
-          ),
-        ),
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.borderLight)),
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: Container(
-              width: 40,
-              height: 40,
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.arrow_back,
-                color: primaryColor,
-              ),
-            ),
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Profile', style: AppText.headingLarge),
+              SizedBox(height: 2),
+              Text('Manage your account and preferences', style: AppText.bodyMedium),
+            ],
           ),
-          const Expanded(
-            child: Text(
-              'Profile',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          GestureDetector(
-            onTap: () {
-              // TODO: Navigate to settings
-            },
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.settings,
-                color: primaryColor,
-              ),
+          const Spacer(),
+          ElevatedButton.icon(
+            onPressed: () => _showEditSheet(user),
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: const Text('Edit Profile'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              elevation: 0,
+              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -175,666 +164,1043 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildProfileInfo(User user) {
-    return Padding(
+  Widget _buildProfileCard(User user) {
+    final initials = _initials(user.name);
+    return Container(
       padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderLight),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(5), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
       child: Column(
         children: [
           // Avatar
-          Stack(
+          Container(
+            width: 80,
+            height: 80,
+            decoration: const BoxDecoration(
+              color: AppColors.primaryLight,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                initials,
+                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(user.name, style: AppText.headingMedium, textAlign: TextAlign.center),
+          const SizedBox(height: 4),
+          Text(user.major, style: AppText.bodyMedium, textAlign: TextAlign.center),
+          if (user.minor != null) ...[
+            const SizedBox(height: 2),
+            Text('Minor: ${user.minor}', style: AppText.bodySmall, textAlign: TextAlign.center),
+          ],
+          const SizedBox(height: 16),
+          Container(height: 1, color: AppColors.borderLight),
+          const SizedBox(height: 16),
+          // Stats grid
+          Row(
             children: [
-              Container(
-                width: 128,
-                height: 128,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: primaryColor.withOpacity(0.2),
-                    width: 4,
-                  ),
-                ),
-                padding: const EdgeInsets.all(4),
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: primaryColor.withOpacity(0.1),
-                  ),
-                  child: Icon(
-                    Icons.person,
-                    size: 48,
-                    color: primaryColor.withOpacity(0.4),
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 4,
-                right: 4,
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: primaryColor,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2),
-                  ),
-                  child: const Icon(
-                    Icons.edit,
-                    size: 14,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
+              Expanded(child: _MiniStat(label: 'Standing', value: _standingLabel(user.academicStanding))),
+              Container(width: 1, height: 40, color: AppColors.borderLight),
+              Expanded(child: _MiniStat(label: 'Grad Year', value: _gradYear(user.academicStanding))),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _MiniStat(label: 'GPA', value: user.gpa != null ? user.gpa!.toStringAsFixed(2) : 'N/A')),
+              Container(width: 1, height: 40, color: AppColors.borderLight),
+              Expanded(child: _MiniStat(label: 'Intensity', value: '${user.workWillingness}/10')),
             ],
           ),
           const SizedBox(height: 16),
-          // Name
-          Text(
-            user.name,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.5,
-            ),
+          Container(height: 1, color: AppColors.borderLight),
+          const SizedBox(height: 16),
+          // Contact
+          _DetailRow(icon: Icons.email_outlined, label: user.nyuEmail),
+          const SizedBox(height: 8),
+          _DetailRow(icon: Icons.badge_outlined, label: user.nyuId),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCoursesCard() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderLight),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(5), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('MY COURSES', style: AppText.label),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => _openCourseManager(context),
+                icon: const Icon(Icons.add, size: 15, color: AppColors.primary),
+                label: const Text('Manage', style: TextStyle(fontSize: 13, color: AppColors.primary)),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          // University & Major
-          Text(
-            'NYU, ${user.major}',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: primaryColor,
+          const SizedBox(height: 14),
+          if (_loadingCourses)
+            const Center(child: Padding(
+              padding: EdgeInsets.all(20),
+              child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2),
+            ))
+          else if (_courses.isEmpty)
+            _buildEmptyCourses()
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _courses.map((c) => _CourseChip(course: c)).toList(),
             ),
-          ),
-          const SizedBox(height: 4),
-          // Class Year
-          Text(
-            'Class of ${_getGraduationYear(user.academicStanding)} • ${_getStandingLabel(user.academicStanding)}',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.black.withOpacity(0.6),
-            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyCourses() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Column(
+        children: [
+          const Icon(Icons.book_outlined, size: 32, color: AppColors.textMuted),
+          const SizedBox(height: 8),
+          const Text('No courses enrolled', style: AppText.bodySmall),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () => _openCourseManager(context),
+            child: const Text('Add courses', style: TextStyle(color: AppColors.primary)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCoursesSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text(
-            'MY COURSES',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.5,
-              color: primaryColor.withOpacity(0.6),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (_loadingCourses)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: primaryColor,
-                    ),
-                  ),
-                )
-              else ...[
-                ..._enrolledCourses.map((course) => _buildCourseChip(course)),
-                _buildAddCourseButton(),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCourseChip(Course course) {
+  Widget _buildPreferencesCard(User user) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(9999),
-        border: Border.all(
-          color: primaryColor.withOpacity(0.2),
-        ),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderLight),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(5), blurRadius: 8, offset: const Offset(0, 2))],
       ),
-      child: Text(
-        course.courseCode,
-        style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: primaryColor,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAddCourseButton() {
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context)
-            .push(
-          MaterialPageRoute(builder: (_) => const CourseListScreen()),
-        )
-            .then((_) {
-          _loadEnrolledCourses();
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(9999),
-          border: Border.all(
-            color: primaryColor.withOpacity(0.3),
-            width: 2,
-            style: BorderStyle.solid,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.add,
-              size: 16,
-              color: primaryColor.withOpacity(0.6),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              'Add',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: primaryColor.withOpacity(0.6),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAccountSettingsSection(BuildContext context, User user) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text(
-            'ACCOUNT SETTINGS',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.5,
-              color: primaryColor.withOpacity(0.6),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: primaryColor.withOpacity(0.05),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('STUDY PREFERENCES', style: AppText.label),
+          const SizedBox(height: 16),
+          Row(
             children: [
-              _buildSettingsItem(
-                icon: Icons.person,
-                label: 'Edit Profile',
-                onTap: () => _showEditProfileSheet(context, user),
-                showBorder: true,
-              ),
-              _buildSettingsItem(
-                icon: Icons.notifications,
-                label: 'Notification Settings',
-                onTap: () {
-                  // TODO: Navigate to notification settings
-                },
-                showBorder: false,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSettingsItem({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    required bool showBorder,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: showBorder
-              ? Border(
-                  bottom: BorderSide(
-                    color: primaryColor.withOpacity(0.05),
-                  ),
-                )
-              : null,
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                icon,
-                color: primaryColor,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 16,
+              Expanded(
+                child: _PrefItem(
+                  icon: Icons.location_on_outlined,
+                  label: 'Location',
+                  value: user.preferredLocation.isEmpty ? 'Not set' : user.preferredLocation,
                 ),
               ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              color: Colors.black.withOpacity(0.3),
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLogoutButton(BuildContext context) {
-    return GestureDetector(
-      onTap: () async {
-        final auth = context.read<AuthProvider>();
-        await auth.logout();
-        if (context.mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (_) => false,
-          );
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.red.withOpacity(0.2),
-          ),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.logout,
-              color: Colors.red,
-            ),
-            SizedBox(width: 8),
-            Text(
-              'Logout',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.red,
+              const SizedBox(width: 16),
+              Expanded(
+                child: _PrefItem(
+                  icon: Icons.schedule_outlined,
+                  label: 'Time',
+                  value: user.timePreference.isEmpty ? 'Not set' : user.timePreference,
+                ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _PrefItem(
+                  icon: Icons.local_fire_department_outlined,
+                  label: 'Intensity',
+                  value: '${user.workWillingness} / 10',
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildBottomNavBar(BuildContext context) {
+  String _initials(String name) {
+    final parts = name.trim().split(' ');
+    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    return name.substring(0, name.length.clamp(0, 2)).toUpperCase();
+  }
+}
+
+// ─── Helper widgets ───────────────────────────────────────────────────────────
+
+class _MiniStat extends StatelessWidget {
+  final String label;
+  final String value;
+  const _MiniStat({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+        const SizedBox(height: 2),
+        Text(label, style: AppText.bodySmall.copyWith(fontSize: 11)),
+      ],
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _DetailRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: AppColors.textMuted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(label, style: AppText.bodySmall.copyWith(fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ],
+    );
+  }
+}
+
+class _CourseChip extends StatelessWidget {
+  final Course course;
+  const _CourseChip({required this.course});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(
-            color: primaryColor.withOpacity(0.1),
-          ),
-        ),
+        color: AppColors.primaryLight,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withAlpha(40)),
       ),
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 32),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _buildNavItem(
-            icon: Icons.auto_awesome,
-            label: 'Recs',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const RecommendationScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.chat_bubble_outline,
-            label: 'Chatting',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const ChatListScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.home_outlined,
-            label: 'Home',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const HomeScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.calendar_month_outlined,
-            label: 'Calendar',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const CalendarScreen()),
-              );
-            },
-          ),
-          _buildNavItem(
-            icon: Icons.account_circle,
-            label: 'Profile',
-            isActive: true,
-            onTap: () {},
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavItem({
-    required IconData icon,
-    required String label,
-    required bool isActive,
-    required VoidCallback onTap,
-  }) {
-    final color = isActive ? const Color(0xFF57068C) : Colors.grey;
-
-    return GestureDetector(
-      onTap: onTap,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            icon,
-            color: color,
-          ),
-          const SizedBox(height: 4),
           Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-              color: color,
-            ),
+            course.courseCode,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
+          ),
+          Text(
+            course.courseName,
+            style: AppText.bodySmall.copyWith(fontSize: 11),
           ),
         ],
-      ),
-    );
-  }
-
-  void _showEditProfileSheet(BuildContext context, User user) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => EditProfileSheet(
-        user: user,
-        onSaved: () {
-          Navigator.pop(context);
-        },
       ),
     );
   }
 }
 
+class _PrefItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _PrefItem({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: AppText.label.copyWith(fontSize: 10)),
+                const SizedBox(height: 2),
+                Text(value, style: AppText.headingSmall.copyWith(fontSize: 13)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Edit Profile Sheet (preserved logic, refreshed styling) ──────────────────
+
 class EditProfileSheet extends StatefulWidget {
   final User user;
   final VoidCallback onSaved;
 
-  const EditProfileSheet({
-    super.key,
-    required this.user,
-    required this.onSaved,
-  });
+  const EditProfileSheet({super.key, required this.user, required this.onSaved});
 
   @override
   State<EditProfileSheet> createState() => _EditProfileSheetState();
 }
 
 class _EditProfileSheetState extends State<EditProfileSheet> {
-  static const Color primaryColor = Color(0xFF2C097F);
-
   bool _saving = false;
   String? _error;
 
-  late TextEditingController _nameController;
-  late TextEditingController _majorController;
-  late TextEditingController _minorController;
-  late TextEditingController _gpaController;
-  late int _academicStanding;
-  late int _workWillingness;
-  late String _preferredLocation;
-  late String _timePreference;
+  late TextEditingController _nameCtrl;
+  late TextEditingController _majorCtrl;
+  late TextEditingController _minorCtrl;
+  late TextEditingController _gpaCtrl;
+  late int _standing;
+  late int _willingness;
+  late String _location;
+  late String _time;
 
-  // choice option
-  static const List<String> locationOptions = [
-    'Kimmel',
-    'Bobst',
-    'Off-campus',
-  ];
-
-  static const List<String> timeOptions = [
-    'Before 12',
-    'After 12',
-  ];
+  static const _locationOptions = ['Kimmel', 'Bobst', 'Off-campus'];
+  static const _timeOptions = ['Before 12', 'After 12'];
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.user.name);
-    _majorController = TextEditingController(text: widget.user.major);
-    _minorController = TextEditingController(text: widget.user.minor ?? '');
-    _gpaController =
-        TextEditingController(text: widget.user.gpa?.toString() ?? '');
-    _academicStanding = widget.user.academicStanding;
-    _workWillingness = widget.user.workWillingness;
-    // 기존 값이 옵션에 있으면 사용, 없으면 첫 번째 옵션 사용
-    _preferredLocation = locationOptions.contains(widget.user.preferredLocation)
-        ? widget.user.preferredLocation
-        : locationOptions.first;
-    _timePreference = timeOptions.contains(widget.user.timePreference)
-        ? widget.user.timePreference
-        : timeOptions.first;
+    _nameCtrl = TextEditingController(text: widget.user.name);
+    _majorCtrl = TextEditingController(text: widget.user.major);
+    _minorCtrl = TextEditingController(text: widget.user.minor ?? '');
+    _gpaCtrl = TextEditingController(text: widget.user.gpa?.toString() ?? '');
+    _standing = widget.user.academicStanding;
+    _willingness = widget.user.workWillingness;
+    _location = _locationOptions.contains(widget.user.preferredLocation)
+        ? widget.user.preferredLocation : _locationOptions.first;
+    _time = _timeOptions.contains(widget.user.timePreference)
+        ? widget.user.timePreference : _timeOptions.first;
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _majorController.dispose();
-    _minorController.dispose();
-    _gpaController.dispose();
+    _nameCtrl.dispose(); _majorCtrl.dispose();
+    _minorCtrl.dispose(); _gpaCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+    setState(() { _saving = true; _error = null; });
     try {
       final updated = await UserService.updateMe(UserUpdate(
-        name: _nameController.text.trim(),
-        major: _majorController.text.trim(),
-        minor: _minorController.text.trim().isEmpty
-            ? null
-            : _minorController.text.trim(),
-        academicStanding: _academicStanding,
-        workWillingness: _workWillingness,
-        preferredLocation: _preferredLocation,
-        timePreference: _timePreference,
-        gpa: _gpaController.text.trim().isEmpty
-            ? null
-            : double.tryParse(_gpaController.text.trim()),
+        name: _nameCtrl.text.trim(),
+        major: _majorCtrl.text.trim(),
+        minor: _minorCtrl.text.trim().isEmpty ? null : _minorCtrl.text.trim(),
+        academicStanding: _standing,
+        workWillingness: _willingness,
+        preferredLocation: _location,
+        timePreference: _time,
+        gpa: _gpaCtrl.text.trim().isEmpty ? null : double.tryParse(_gpaCtrl.text.trim()),
       ));
       if (mounted) {
         context.read<AuthProvider>().updateUser(updated);
         widget.onSaved();
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
-      setState(() => _saving = false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          // Handle
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[300],
-              borderRadius: BorderRadius.circular(2),
-            ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Dialog header
+        Container(
+          padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.borderLight)),
           ),
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: const Icon(Icons.close),
-                ),
-                const Expanded(
-                  child: Text(
-                    'Edit Profile',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 24),
-              ],
-            ),
+          child: Row(
+            children: [
+              const Text('Edit Profile', style: AppText.headingMedium),
+              const Spacer(),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, size: 20, color: AppColors.textMuted),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
           ),
-          const Divider(height: 1),
-          // Form
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
+        ),
+        // Form
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child:
-                        Text(_error!, style: const TextStyle(color: Colors.red)),
-                  ),
-                _buildTextField(_nameController, 'Name'),
-                const SizedBox(height: 16),
-                _buildTextField(_majorController, 'Major'),
-                const SizedBox(height: 16),
-                _buildTextField(_minorController, 'Minor'),
-                const SizedBox(height: 16),
-                _buildDropdown(),
-                const SizedBox(height: 16),
-                _buildSlider(),
-                const SizedBox(height: 16),
-                _buildLocationDropdown(),
-                const SizedBox(height: 16),
-                _buildTimeDropdown(),
-                const SizedBox(height: 16),
-                _buildTextField(_gpaController, 'GPA',
-                    keyboardType: TextInputType.number),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _saving ? null : _save,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.errorLight,
+                      borderRadius: BorderRadius.circular(8),
                     ),
+                    child: Text(_error!, style: const TextStyle(fontSize: 13, color: AppColors.error)),
                   ),
-                  child: _saving
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+                _field(_nameCtrl, 'Name'),
+                _field(_majorCtrl, 'Major'),
+                _field(_minorCtrl, 'Minor (optional)'),
+                _field(_gpaCtrl, 'GPA (optional)', keyboardType: TextInputType.number),
+                _dropdown<int>(
+                  label: 'Academic Standing',
+                  value: _standing,
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('Freshman')),
+                    DropdownMenuItem(value: 2, child: Text('Sophomore')),
+                    DropdownMenuItem(value: 3, child: Text('Junior')),
+                    DropdownMenuItem(value: 4, child: Text('Senior')),
+                  ],
+                  onChanged: (v) => setState(() => _standing = v!),
+                ),
+                _dropdown<String>(
+                  label: 'Preferred Location',
+                  value: _location,
+                  items: _locationOptions.map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
+                  onChanged: (v) => setState(() => _location = v!),
+                ),
+                _dropdown<String>(
+                  label: 'Time Preference',
+                  value: _time,
+                  items: _timeOptions.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                  onChanged: (v) => setState(() => _time = v!),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Work Willingness', style: AppText.bodyMedium),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(color: AppColors.primaryLight, borderRadius: BorderRadius.circular(99)),
+                            child: Text('$_willingness / 10', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
                           ),
-                        )
-                      : const Text(
-                          'Save Changes',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        ],
+                      ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          activeTrackColor: AppColors.primary,
+                          thumbColor: AppColors.primary,
+                          overlayColor: AppColors.primaryAlpha15,
+                          inactiveTrackColor: AppColors.borderLight,
                         ),
+                        child: Slider(
+                          value: _willingness.toDouble(), min: 1, max: 10, divisions: 9,
+                          onChanged: (v) => setState(() => _willingness = v.round()),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _saving ? null : _save,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
+                    ),
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Save Changes', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _field(TextEditingController ctrl, String label, {TextInputType? keyboardType}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: TextField(
+        controller: ctrl,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.border)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primary, width: 2)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+      ),
+    );
+  }
+
+  Widget _dropdown<T>({
+    required String label,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required void Function(T?) onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: DropdownButtonFormField<T>(
+        initialValue: value,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.border)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primary, width: 2)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+        items: items,
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+// ─── Course Manager Dialog (web-safe, no separate Scaffold) ──────────────────
+
+class _CourseManagerDialog extends StatefulWidget {
+  final VoidCallback onDone;
+  const _CourseManagerDialog({required this.onDone});
+
+  @override
+  State<_CourseManagerDialog> createState() => _CourseManagerDialogState();
+}
+
+class _CourseManagerDialogState extends State<_CourseManagerDialog> {
+  static const _primary = Color(0xFF57068C);
+
+  final _searchCtrl = TextEditingController();
+  List<Course> _enrolled = [];
+  List<Course> _filtered = [];
+  List<dynamic> _userCourses = [];
+  bool _loading = true;
+  bool _showAdd = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _searchCtrl.addListener(_onSearch);
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.removeListener(_onSearch);
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onSearch() {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    setState(() {
+      _filtered = q.isEmpty
+          ? _enrolled
+          : _enrolled.where((c) =>
+              c.courseCode.toLowerCase().contains(q) ||
+              c.courseName.toLowerCase().contains(q)).toList();
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final uc = await UserCourseService.getMyCourses();
+      final all = await CourseService.getAll();
+      final ids = uc.map((u) => u.courseId).toSet();
+      if (mounted) {
+        setState(() {
+          _userCourses = uc;
+          _enrolled = all.where((c) => ids.contains(c.id)).toList();
+          _filtered = _enrolled;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _remove(Course course) async {
+    final uc = _userCourses.firstWhere(
+      (u) => u.courseId == course.id,
+      orElse: () => null,
+    );
+    if (uc == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Remove Course', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text('Remove ${course.courseCode} from your courses?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await UserCourseService.unenroll(uc.courseId);
+      _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 8, 16),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+          ),
+          child: Row(
+            children: [
+              if (_showAdd)
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, size: 20, color: _primary),
+                  onPressed: () => setState(() => _showAdd = false),
+                )
+              else
+                const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _showAdd ? 'Add Course' : 'My Courses',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: widget.onDone,
+              ),
+            ],
+          ),
+        ),
+        // Body
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(color: _primary))
+              : _showAdd
+                  ? _AddCoursePanel(
+                      enrolledIds: _userCourses.map((u) => u.courseId as int).toSet(),
+                      onAdded: () { setState(() => _showAdd = false); _load(); },
+                    )
+                  : _enrolledBody(),
+        ),
+        // Footer button (only on list view)
+        if (!_showAdd)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => setState(() => _showAdd = true),
+                icon: const Icon(Icons.add_circle, size: 20),
+                label: const Text('Add New Course', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _enrolledBody() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: TextField(
+            controller: _searchCtrl,
+            decoration: InputDecoration(
+              hintText: 'Search enrolled courses...',
+              prefixIcon: const Icon(Icons.search, color: _primary, size: 20),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _filtered.isEmpty
+              ? Center(
+                  child: Text(
+                    _enrolled.isEmpty ? 'No courses enrolled yet' : 'No matching courses',
+                    style: const TextStyle(color: Color(0xFF94A3B8)),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  itemCount: _filtered.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
+                  itemBuilder: (_, i) => _CourseRow(
+                    course: _filtered[i],
+                    onRemove: () => _remove(_filtered[i]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CourseRow extends StatelessWidget {
+  final Course course;
+  final VoidCallback onRemove;
+  const _CourseRow({required this.course, required this.onRemove});
+
+  static const _primary = Color(0xFF57068C);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(color: _primary.withAlpha(20), borderRadius: BorderRadius.circular(10)),
+            child: const Icon(Icons.school, color: _primary, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(course.courseCode.toUpperCase(),
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _primary, letterSpacing: 0.8)),
+                const SizedBox(height: 2),
+                Text(course.courseName,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            icon: Icon(Icons.delete_outline, color: Colors.grey.shade400),
+            tooltip: 'Remove',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AddCoursePanel extends StatefulWidget {
+  final Set<int> enrolledIds;
+  final VoidCallback onAdded;
+  const _AddCoursePanel({required this.enrolledIds, required this.onAdded});
+
+  @override
+  State<_AddCoursePanel> createState() => _AddCoursePanelState();
+}
+
+class _AddCoursePanelState extends State<_AddCoursePanel> {
+  static const _primary = Color(0xFF57068C);
+  static const _terms = ['Spring', 'Summer', 'Fall'];
+
+  final _searchCtrl = TextEditingController();
+  List<Course> _all = [];
+  List<Course> _filtered = [];
+  bool _loading = true;
+  Course? _selected;
+  String _term = 'Spring';
+  int _year = 2026;
+  TimeOfDay _start = const TimeOfDay(hour: 9, minute: 0);
+  TimeOfDay _end = const TimeOfDay(hour: 10, minute: 30);
+  bool _enrolling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAll() async {
+    try {
+      final all = await CourseService.getAll();
+      if (mounted) setState(() { _all = all; _filtered = all; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _filter(String q) {
+    final query = q.toLowerCase();
+    setState(() {
+      _filtered = q.isEmpty
+          ? _all
+          : _all.where((c) => c.courseCode.toLowerCase().contains(query) || c.courseName.toLowerCase().contains(query)).toList();
+    });
+  }
+
+  String _fmt(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _enroll() async {
+    if (_selected == null) return;
+    setState(() => _enrolling = true);
+    try {
+      await UserCourseService.enroll(
+        courseId: _selected!.id,
+        term: _term,
+        year: _year,
+        startTime: _fmt(_start),
+        endTime: _fmt(_end),
+      );
+      if (mounted) widget.onAdded();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _enrolling = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_selected != null) return _buildForm();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: _filter,
+            decoration: InputDecoration(
+              hintText: 'Search courses...',
+              prefixIcon: const Icon(Icons.search, color: _primary, size: 20),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(color: _primary))
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _filtered.length,
+                  itemBuilder: (_, i) {
+                    final c = _filtered[i];
+                    final enrolled = widget.enrolledIds.contains(c.id);
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: enrolled ? const Color(0xFFF8FAFC) : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: enrolled ? const Color(0xFFE2E8F0) : _primary.withAlpha(20)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(c.courseCode, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                                    color: enrolled ? Colors.grey.shade400 : _primary)),
+                                Text(c.courseName, style: TextStyle(fontSize: 13,
+                                    color: enrolled ? Colors.grey.shade400 : const Color(0xFF475569)),
+                                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ],
+                            ),
+                          ),
+                          if (enrolled)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: Colors.green.withAlpha(25), borderRadius: BorderRadius.circular(20)),
+                              child: const Text('Enrolled', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green)),
+                            )
+                          else
+                            GestureDetector(
+                              onTap: () => setState(() => _selected = c),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                decoration: BoxDecoration(color: _primary, borderRadius: BorderRadius.circular(20)),
+                                child: const Text('Add', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _primary.withAlpha(10),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _primary.withAlpha(30)),
+            ),
+            child: Row(
+              children: [
+                Container(width: 40, height: 40,
+                    decoration: BoxDecoration(color: _primary.withAlpha(25), borderRadius: BorderRadius.circular(10)),
+                    child: const Icon(Icons.school, color: _primary, size: 20)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_selected!.courseCode.toUpperCase(),
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _primary)),
+                      Text(_selected!.courseName,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('TERM', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8), letterSpacing: 1.2)),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _term,
+                          isExpanded: true,
+                          items: _terms.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                          onChanged: (v) => setState(() => _term = v ?? _term),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('YEAR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8), letterSpacing: 1.2)),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<int>(
+                          value: _year,
+                          isExpanded: true,
+                          items: [2025, 2026, 2027].map((y) => DropdownMenuItem(value: y, child: Text('$y'))).toList(),
+                          onChanged: (v) => setState(() => _year = v ?? _year),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text('CLASS TIME', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8), letterSpacing: 1.2)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _timePicker('START', _start, (t) => setState(() => _start = t))),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('—', style: TextStyle(color: Color(0xFF94A3B8)))),
+              Expanded(child: _timePicker('END', _end, (t) => setState(() => _end = t))),
+            ],
+          ),
+          const SizedBox(height: 28),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _enrolling ? null : _enroll,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: _enrolling
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('Enroll in Course', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
             ),
           ),
         ],
@@ -842,124 +1208,26 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
     );
   }
 
-  Widget _buildTextField(
-    TextEditingController controller,
-    String label, {
-    TextInputType? keyboardType,
-  }) {
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: primaryColor, width: 2),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDropdown() {
-    return DropdownButtonFormField<int>(
-      initialValue: _academicStanding,
-      decoration: InputDecoration(
-        labelText: 'Academic Standing',
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: primaryColor, width: 2),
+  Widget _timePicker(String label, TimeOfDay time, ValueChanged<TimeOfDay> onChanged) {
+    final h = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+    final m = time.minute.toString().padLeft(2, '0');
+    final p = time.period == DayPeriod.am ? 'AM' : 'PM';
+    return GestureDetector(
+      onTap: () async {
+        final picked = await showTimePicker(context: context, initialTime: time);
+        if (picked != null) onChanged(picked);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
+        child: Row(
+          children: [
+            const Icon(Icons.access_time, size: 15, color: Color(0xFF94A3B8)),
+            const SizedBox(width: 6),
+            Text('$h:$m $p', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          ],
         ),
       ),
-      items: const [
-        DropdownMenuItem(value: 1, child: Text('Freshman')),
-        DropdownMenuItem(value: 2, child: Text('Sophomore')),
-        DropdownMenuItem(value: 3, child: Text('Junior')),
-        DropdownMenuItem(value: 4, child: Text('Senior')),
-      ],
-      onChanged: (v) => setState(() => _academicStanding = v!),
-    );
-  }
-
-  Widget _buildSlider() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Work Willingness: $_workWillingness/10',
-          style: const TextStyle(
-            fontSize: 14,
-            color: Colors.grey,
-          ),
-        ),
-        const SizedBox(height: 8),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            activeTrackColor: primaryColor,
-            thumbColor: primaryColor,
-            overlayColor: primaryColor.withAlpha(51),
-          ),
-          child: Slider(
-            value: _workWillingness.toDouble(),
-            min: 1,
-            max: 10,
-            divisions: 9,
-            label: _workWillingness.toString(),
-            onChanged: (v) => setState(() => _workWillingness = v.round()),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLocationDropdown() {
-    return DropdownButtonFormField<String>(
-      initialValue: _preferredLocation,
-      decoration: InputDecoration(
-        labelText: 'Preferred Location',
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: primaryColor, width: 2),
-        ),
-      ),
-      items: locationOptions.map((location) {
-        return DropdownMenuItem(
-          value: location,
-          child: Text(location),
-        );
-      }).toList(),
-      onChanged: (v) => setState(() => _preferredLocation = v!),
-    );
-  }
-
-  Widget _buildTimeDropdown() {
-    return DropdownButtonFormField<String>(
-      initialValue: _timePreference,
-      decoration: InputDecoration(
-        labelText: 'Time Preference',
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: primaryColor, width: 2),
-        ),
-      ),
-      items: timeOptions.map((time) {
-        return DropdownMenuItem(
-          value: time,
-          child: Text(time),
-        );
-      }).toList(),
-      onChanged: (v) => setState(() => _timePreference = v!),
     );
   }
 }

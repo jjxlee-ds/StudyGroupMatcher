@@ -22,6 +22,7 @@ class MessageResponse(BaseModel):
     id: str
     room_id: str
     sender_id: str
+    sender_name: Optional[str] = None
     content: str
     created_at: datetime
     read_at: Optional[datetime] = None

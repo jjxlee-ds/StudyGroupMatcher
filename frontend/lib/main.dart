@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/course_provider.dart';
+import 'screens/app_shell.dart';
 import 'screens/auth/login_screen.dart';
-import 'screens/home_screen.dart';
 import 'widgets/loading_indicator.dart';
 
 void main() {
@@ -25,6 +25,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Study Group Matcher',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
@@ -60,6 +61,6 @@ class _AuthGateState extends State<AuthGate> {
       return const Scaffold(body: LoadingIndicator());
     }
     final auth = context.watch<AuthProvider>();
-    return auth.isLoggedIn ? const HomeScreen() : const LoginScreen();
+    return auth.isLoggedIn ? const AppShell() : const LoginScreen();
   }
 }

@@ -101,4 +101,22 @@ def get_messages(
         query = query.lt("created_at", before)
 
     result = query.execute()
-    return list(reversed(result.data or []))
+    msgs = list(reversed(result.data or []))
+
+    if msgs:
+        sender_ids = list({m["sender_id"] for m in msgs})
+        try:
+            users_result = (
+                supabase.table("users")
+                .select("id, name")
+                .in_("id", sender_ids)
+                .execute()
+            )
+            name_map = {u["id"]: u["name"] for u in (users_result.data or [])}
+            for m in msgs:
+                m["sender_name"] = name_map.get(m["sender_id"])
+        except Exception:
+            for m in msgs:
+                m["sender_name"] = None
+
+    return msgs

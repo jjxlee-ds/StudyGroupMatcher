@@ -62,17 +62,17 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Joined ${widget.group.name}!'),
+            content: Text('Join request sent for "${widget.group.name}"! Awaiting admin approval.'),
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.of(context).pop(true); // Return true to indicate success
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to join: ${e.toString()}'),
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
             backgroundColor: Colors.red,
           ),
         );
@@ -149,12 +149,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          IconButton(
-            onPressed: () {
-              // TODO: Group settings/options
-            },
-            icon: const Icon(Icons.more_vert),
-          ),
+          const SizedBox(width: 48),
         ],
       ),
     );
@@ -386,7 +381,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                 ),
               )
             : Text(
-                isFull ? 'Group Full' : 'Join Group Chat',
+                isFull ? 'Group Full' : 'Request to Join',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,

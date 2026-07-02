@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/api_config.dart';
 import '../models/chat_message.dart';
@@ -14,7 +14,7 @@ import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
 import '../services/chat_service.dart';
 import '../services/meeting_service.dart';
-import 'join_requests_screen.dart';
+import '../services/study_group_service.dart';
 
 class ChatRoomScreen extends StatefulWidget {
   final String roomId;
@@ -22,6 +22,8 @@ class ChatRoomScreen extends StatefulWidget {
   final String groupName;
   final int memberCount;
   final bool isAdmin;
+  final bool isEmbedded;
+  final VoidCallback? onLeft;
 
   const ChatRoomScreen({
     super.key,
@@ -30,6 +32,8 @@ class ChatRoomScreen extends StatefulWidget {
     required this.groupName,
     required this.memberCount,
     this.isAdmin = false,
+    this.isEmbedded = false,
+    this.onLeft,
   });
 
   @override
@@ -47,8 +51,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  WebSocket? _ws;
+  WebSocketChannel? _channel;
+  StreamSubscription? _wsSubscription;
+  Map<String, String> _memberNames = {};
   bool _loading = true;
+  bool _loadError = false;
   bool _sending = false;
   bool _someoneTyping = false;
   String _typingName = '';
@@ -69,6 +76,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
       _currentUserId =
           Provider.of<AuthProvider>(context, listen: false).user?.id;
       _loadHistory();
+      _loadMembers();
       _connectWebSocket();
     });
   }
@@ -86,7 +94,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
 
   @override
   void dispose() {
-    _ws?.close();
+    _wsSubscription?.cancel();
+    _channel?.sink.close();
     _inputController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
@@ -98,7 +107,43 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
 
   // ─── Data ───────────────────────────────────────────────────────────────────
 
+  Future<void> _loadMembers() async {
+    try {
+      final names = await StudyGroupService.getMemberNames(widget.groupId);
+      if (mounted) setState(() => _memberNames = names);
+    } catch (_) {
+      // member names are supplemental — chat still works without them
+    }
+  }
+
+  void _showGroupInfoPanel(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 48, vertical: 32),
+        child: SizedBox(
+          width: 420,
+          child: _GroupInfoPanel(
+            groupId: widget.groupId,
+            groupName: widget.groupName,
+            memberCount: widget.memberCount,
+            isAdmin: widget.isAdmin,
+            memberNames: _memberNames,
+            onLeave: () {
+              if (!widget.isEmbedded && mounted && Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+              widget.onLeft?.call();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadHistory() async {
+    if (mounted) setState(() { _loading = true; _loadError = false; });
     try {
       final results = await Future.wait([
         ChatService.getMessages(widget.roomId),
@@ -106,6 +151,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
       ]);
       if (mounted) {
         setState(() {
+          _messages.clear();
+          _proposals.clear();
           _messages.addAll(results[0] as List<ChatMessage>);
           _proposals.addAll(results[1] as List<MeetingProposal>);
           _loading = false;
@@ -113,7 +160,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
         _scrollToBottom(jump: true);
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _loadError = true; });
     }
   }
 
@@ -154,14 +201,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
     final token = prefs.getString('access_token');
     if (token == null) return;
 
-    final wsBase = ApiConfig.baseUrl.replaceFirst(RegExp(r'^http'), 'ws');
-    final url = '$wsBase/ws/rooms/${widget.roomId}?token=$token';
+    final url = '${ApiConfig.wsBaseUrl}/ws/rooms/${widget.roomId}?token=$token';
 
     try {
-      _ws = await WebSocket.connect(url);
-      _ws!.listen(
+      _channel = WebSocketChannel.connect(Uri.parse(url));
+      _wsSubscription = _channel!.stream.listen(
         _onWsMessage,
-        onDone: () => _scheduleReconnect(),
+        onDone: _scheduleReconnect,
         onError: (_) => _scheduleReconnect(),
         cancelOnError: true,
       );
@@ -219,15 +265,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
 
   Future<void> _sendMessage() async {
     final content = _inputController.text.trim();
-    if (content.isEmpty || _ws == null || _sending) return;
+    if (content.isEmpty || _channel == null || _sending) return;
 
     setState(() => _sending = true);
     _inputController.clear();
 
     try {
-      _ws!.add(jsonEncode({'content': content}));
+      _channel!.sink.add(jsonEncode({'content': content}));
     } catch (_) {
-      // 재연결 후 재전송은 UX 개선 여지
+      // reconnect on next attempt
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -413,12 +459,16 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
       backgroundColor: Colors.white,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
-      titleSpacing: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.chevron_left,
-            size: 30, color: Color(0xFF0F172A)),
-        onPressed: () => Navigator.pop(context),
-      ),
+      centerTitle: false,
+      titleSpacing: widget.isEmbedded ? 20.0 : 0,
+      leading: widget.isEmbedded
+          ? null
+          : IconButton(
+              icon: const Icon(Icons.chevron_left,
+                  size: 30, color: Color(0xFF0F172A)),
+              onPressed: () => Navigator.pop(context),
+            ),
+      automaticallyImplyLeading: !widget.isEmbedded,
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -438,28 +488,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
       ),
       actions: [
         IconButton(
-          icon: const Icon(Icons.search, size: 22, color: Color(0xFF0F172A)),
-          onPressed: () {},
+          icon: const Icon(Icons.more_vert, size: 22, color: Color(0xFF0F172A)),
+          onPressed: () => _showGroupInfoPanel(context),
         ),
-        if (widget.isAdmin)
-          IconButton(
-            icon: const Icon(Icons.more_vert, size: 22, color: Color(0xFF0F172A)),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => JoinRequestsScreen(
-                    groupId: widget.groupId,
-                    groupName: widget.groupName,
-                  ),
-                ),
-              );
-            },
-          )
-        else
-          IconButton(
-            icon: const Icon(Icons.more_vert, size: 22, color: Color(0xFF0F172A)),
-            onPressed: () {},
-          ),
       ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
@@ -472,6 +503,24 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
     if (_loading) {
       return const Center(
         child: CircularProgressIndicator(color: primaryColor),
+      );
+    }
+    if (_loadError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.wifi_off_rounded, size: 48, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text('Failed to load messages',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 15)),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _loadHistory,
+              child: const Text('Try again', style: TextStyle(color: primaryColor)),
+            ),
+          ],
+        ),
       );
     }
     if (_messages.isEmpty) {
@@ -534,7 +583,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
               ),
               child: Center(
                 child: Text(
-                  _initials(msg.senderId.substring(0, 4)),
+                  _initials(msg.senderName ?? _memberNames[msg.senderId] ?? '?'),
                   style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
@@ -553,7 +602,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
                 Padding(
                   padding: const EdgeInsets.only(left: 4, bottom: 2),
                   child: Text(
-                    msg.senderId.substring(0, 8), // ideally sender name
+                    msg.senderName ?? _memberNames[msg.senderId] ?? 'Member',
                     style: const TextStyle(
                         fontSize: 11, color: Color(0xFF64748B)),
                   ),
@@ -712,202 +761,120 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
     final timeStr =
         '${DateFormat('h:mm a').format(proposal.startTime)} – ${DateFormat('h:mm a').format(proposal.endTime)}';
 
-    // 만료까지 남은 시간
     String expiryStr = '';
-    if (!expired) {
+    if (!expired && !confirmed) {
       final diff = proposal.expiresAt.difference(DateTime.now());
-      if (diff.inHours > 0) {
-        expiryStr = '${diff.inHours}h ${diff.inMinutes % 60}m left';
-      } else {
-        expiryStr = '${diff.inMinutes}m left';
-      }
+      expiryStr = diff.inHours > 0
+          ? '${diff.inHours}h ${diff.inMinutes % 60}m left'
+          : '${diff.inMinutes}m left';
     }
 
+    final accentColor = confirmed
+        ? const Color(0xFF15803D)
+        : expired
+            ? const Color(0xFF94A3B8)
+            : const Color(0xFF57068C);
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Center(
         child: Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(maxWidth: 340),
+          constraints: const BoxConstraints(maxWidth: 380),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: confirmed
-                  ? const Color(0xFF15803D)
-                  : expired
-                      ? const Color(0xFFE2E8F0)
-                      : const Color(0xFFDDD6FE),
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF57068C).withAlpha(18),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: accentColor.withAlpha(50)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 헤더
+              // Compact header row
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                 decoration: BoxDecoration(
-                  color: confirmed
-                      ? const Color(0xFFF0FDF4)
-                      : expired
-                          ? const Color(0xFFF8FAFC)
-                          : const Color(0xFFF5F3FF),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                  color: accentColor.withAlpha(12),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(11)),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      confirmed
-                          ? Icons.check_circle_rounded
-                          : Icons.calendar_month_rounded,
-                      size: 16,
-                      color: confirmed
-                          ? const Color(0xFF15803D)
-                          : expired
-                              ? const Color(0xFF94A3B8)
-                              : const Color(0xFF57068C),
+                      confirmed ? Icons.check_circle_rounded : Icons.calendar_month_rounded,
+                      size: 14,
+                      color: accentColor,
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      confirmed
-                          ? 'Meeting Confirmed!'
-                          : expired
-                              ? 'Meeting Proposal (Expired)'
-                              : 'Meeting Proposal',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: confirmed
-                            ? const Color(0xFF15803D)
-                            : expired
-                                ? const Color(0xFF94A3B8)
-                                : const Color(0xFF57068C),
-                        letterSpacing: 0.2,
-                      ),
+                      confirmed ? 'Meeting Confirmed' : expired ? 'Proposal Expired' : 'Meeting Proposal',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: accentColor),
                     ),
+                    const Spacer(),
+                    if (expiryStr.isNotEmpty)
+                      Text('⏱ $expiryStr',
+                          style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
+                    if (myVote != null && !confirmed) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: myVote == true ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          myVote == true ? '✓ Voted' : '✗ Voted',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: myVote == true ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
 
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 날짜 & 시간
-                    Text(
-                      dateStr,
-                      style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F172A)),
+                    // Date / time / location in one compact block
+                    Row(
+                      children: [
+                        const Icon(Icons.calendar_today_outlined, size: 13, color: Color(0xFF64748B)),
+                        const SizedBox(width: 6),
+                        Text('$dateStr  ·  $timeStr',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A))),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      timeStr,
-                      style: const TextStyle(
-                          fontSize: 13, color: Color(0xFF475569)),
-                    ),
-
-                    // 장소
-                    if (proposal.location != null &&
-                        proposal.location!.isNotEmpty) ...[
-                      const SizedBox(height: 6),
+                    if (proposal.location != null && proposal.location!.isNotEmpty) ...[
+                      const SizedBox(height: 3),
                       Row(
                         children: [
-                          const Icon(Icons.location_on_outlined,
-                              size: 13, color: Color(0xFF64748B)),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              proposal.location!,
-                              style: const TextStyle(
-                                  fontSize: 13, color: Color(0xFF475569)),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
+                          const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 6),
+                          Text(proposal.location!,
+                              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                         ],
                       ),
                     ],
+                    const SizedBox(height: 8),
 
-                    const SizedBox(height: 12),
-
-                    // 투표 완료 배지
-                    if (myVote != null) ...[
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: myVote == true
-                                  ? const Color(0xFFDCFCE7)
-                                  : const Color(0xFFFEE2E2),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  myVote == true
-                                      ? Icons.check_circle
-                                      : Icons.cancel,
-                                  size: 12,
-                                  color: myVote == true
-                                      ? const Color(0xFF15803D)
-                                      : const Color(0xFFB91C1C),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Voted',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: myVote == true
-                                        ? const Color(0xFF15803D)
-                                        : const Color(0xFFB91C1C),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-
-                    // Attend / Not Attend 버튼
+                    // Vote buttons (hidden if confirmed or expired)
                     if (confirmed)
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
                         decoration: BoxDecoration(
                           color: const Color(0xFFDCFCE7),
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.check_circle,
-                                size: 15, color: Color(0xFF15803D)),
-                            SizedBox(width: 6),
-                            Text(
-                              'Confirmed Meeting',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF15803D),
-                              ),
-                            ),
+                            Icon(Icons.check_circle, size: 13, color: Color(0xFF15803D)),
+                            SizedBox(width: 5),
+                            Text('Confirmed', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF15803D))),
                           ],
                         ),
                       )
@@ -920,13 +887,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
                               icon: Icons.check_circle_outline,
                               selected: myVote == true,
                               loading: isVoting,
-                              // Attend→Not Attend 방향만 허용: Not Attend 상태에서 Attend 비활성화
                               disabled: myVote == false,
                               color: const Color(0xFF15803D),
                               onTap: () => _castVote(proposal, true),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Expanded(
                             child: _VoteButton(
                               label: 'Not Attend',
@@ -940,53 +906,33 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
                         ],
                       )
                     else
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        alignment: Alignment.center,
-                        child: const Text(
-                          'Voting period ended',
-                          style: TextStyle(
-                              fontSize: 12, color: Color(0xFF94A3B8)),
-                        ),
-                      ),
+                      const Text('Voting ended', style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
 
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
 
-                    // 투표 현황 bar
+                    // Compact attendance bar
                     Row(
                       children: [
                         Expanded(
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
+                            borderRadius: BorderRadius.circular(3),
                             child: LinearProgressIndicator(
                               value: proposal.totalMembers > 0
-                                  ? proposal.attendCount /
-                                      proposal.totalMembers
+                                  ? proposal.attendCount / proposal.totalMembers
                                   : 0,
-                              minHeight: 5,
+                              minHeight: 4,
                               backgroundColor: const Color(0xFFE2E8F0),
                               color: const Color(0xFF15803D),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Text(
-                          '${proposal.attendCount}/${proposal.totalMembers} attending',
-                          style: const TextStyle(
-                              fontSize: 11, color: Color(0xFF64748B)),
+                          '${proposal.attendCount}/${proposal.totalMembers}',
+                          style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
                         ),
                       ],
                     ),
-
-                    if (expiryStr.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        '⏱  $expiryStr',
-                        style: const TextStyle(
-                            fontSize: 11, color: Color(0xFF94A3B8)),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
                   ],
                 ),
               ),
@@ -1062,30 +1008,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen>
           const SizedBox(height: 12),
 
           // Quick Actions
-          Row(
-            children: [
-              Expanded(
-                child: _QuickActionButton(
-                  emoji: '🖼️',
-                  label: 'Send Picture',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Image upload coming soon')),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _QuickActionButton(
-                  emoji: '📅',
-                  label: 'Schedule Meeting',
-                  onTap: _showScheduleMeetingSheet,
-                ),
-              ),
-            ],
-          ),
+          if (widget.isAdmin)
+            _QuickActionButton(
+              emoji: '📅',
+              label: 'Schedule Meeting',
+              onTap: _showScheduleMeetingSheet,
+            ),
         ],
       ),
     );
@@ -1674,3 +1602,301 @@ const List<String> _locationHints = [
   'e.g. Kimmel Center Lounge',
   'e.g. Tandon MakerSpace',
 ];
+
+// ─── Group Info Panel ─────────────────────────────────────────────────────────
+
+class _GroupInfoPanel extends StatefulWidget {
+  final String groupId;
+  final String groupName;
+  final int memberCount;
+  final bool isAdmin;
+  final Map<String, String> memberNames;
+  final VoidCallback? onLeave;
+
+  const _GroupInfoPanel({
+    required this.groupId,
+    required this.groupName,
+    required this.memberCount,
+    required this.isAdmin,
+    required this.memberNames,
+    this.onLeave,
+  });
+
+  @override
+  State<_GroupInfoPanel> createState() => _GroupInfoPanelState();
+}
+
+class _GroupInfoPanelState extends State<_GroupInfoPanel> {
+  static const _primary = Color(0xFF57068C);
+
+  List<Map<String, dynamic>> _pendingRequests = [];
+  bool _loadingRequests = true;
+  bool _leaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isAdmin) _loadRequests();
+  }
+
+  Future<void> _leaveGroup() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Leave Group', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Text('Are you sure you want to leave "${widget.groupName}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Leave', style: TextStyle(color: Color(0xFFDC2626))),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _leaving = true);
+    try {
+      await StudyGroupService.leave(widget.groupId);
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onLeave?.call();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _leaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')),
+              backgroundColor: const Color(0xFFDC2626)),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadRequests() async {
+    try {
+      final response = await ApiClient.get('/study-groups/${widget.groupId}/requests');
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (mounted) setState(() { _pendingRequests = data.cast<Map<String, dynamic>>(); _loadingRequests = false; });
+        return;
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _loadingRequests = false);
+  }
+
+  Future<void> _handleRequest(String requestId, String action) async {
+    try {
+      await ApiClient.post('/study-groups/${widget.groupId}/requests/$requestId/$action', body: {});
+      _loadRequests();
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 18, 12, 18),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38, height: 38,
+                decoration: BoxDecoration(color: _primary.withAlpha(20), borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.group, color: _primary, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(widget.groupName,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text('${widget.memberCount} members',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                  ],
+                ),
+              ),
+              IconButton(icon: const Icon(Icons.close, size: 20, color: Color(0xFF64748B)),
+                  onPressed: () => Navigator.pop(context)),
+            ],
+          ),
+        ),
+
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Members section
+                const Text('MEMBERS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                    color: Color(0xFF94A3B8), letterSpacing: 1.2)),
+                const SizedBox(height: 10),
+                widget.memberNames.isEmpty
+                    ? Text('No member data', style: TextStyle(color: Colors.grey.shade400, fontSize: 13))
+                    : Column(
+                        children: widget.memberNames.values.map((name) => _MemberRow(name: name)).toList(),
+                      ),
+
+                // Admin section: pending join requests
+                if (widget.isAdmin) ...[
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      const Text('JOIN REQUESTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                          color: Color(0xFF94A3B8), letterSpacing: 1.2)),
+                      if (_pendingRequests.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.orange.withAlpha(30), borderRadius: BorderRadius.circular(20)),
+                          child: Text('${_pendingRequests.length}',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.orange)),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _loadingRequests
+                      ? const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator(color: _primary, strokeWidth: 2)))
+                      : _pendingRequests.isEmpty
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              child: const Text('No pending requests', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+                            )
+                          : Column(
+                              children: _pendingRequests.map((req) => _RequestRow(
+                                request: req,
+                                onAccept: () => _handleRequest(req['id'], 'approve'),
+                                onDecline: () => _handleRequest(req['id'], 'reject'),
+                              )).toList(),
+                            ),
+                ],
+
+                // Leave group button (all users)
+                const SizedBox(height: 24),
+                const Divider(color: Color(0xFFE2E8F0)),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _leaving ? null : _leaveGroup,
+                    icon: _leaving
+                        ? const SizedBox(width: 14, height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFDC2626)))
+                        : const Icon(Icons.exit_to_app_rounded, size: 16, color: Color(0xFFDC2626)),
+                    label: Text(_leaving ? 'Leaving...' : 'Leave Group',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFFDC2626))),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFFDC2626), width: 1.2),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MemberRow extends StatelessWidget {
+  final String name;
+  const _MemberRow({required this.name});
+
+  static const _primary = Color(0xFF57068C);
+
+  String _initials(String n) {
+    final p = n.trim().split(' ');
+    if (p.length >= 2) return '${p[0][0]}${p[1][0]}'.toUpperCase();
+    return n.substring(0, n.length.clamp(0, 2)).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(color: _primary.withAlpha(20), shape: BoxShape.circle),
+            child: Center(child: Text(_initials(name),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _primary))),
+          ),
+          const SizedBox(width: 10),
+          Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF0F172A))),
+        ],
+      ),
+    );
+  }
+}
+
+class _RequestRow extends StatelessWidget {
+  final Map<String, dynamic> request;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+  const _RequestRow({required this.request, required this.onAccept, required this.onDecline});
+
+  @override
+  Widget build(BuildContext context) {
+    final userObj = request['user'] as Map<String, dynamic>?;
+    final name = userObj?['name'] ?? request['user_name'] ?? 'Applicant';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withAlpha(8),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withAlpha(40)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(color: Colors.orange.withAlpha(20), shape: BoxShape.circle),
+            child: const Center(child: Icon(Icons.person_outline, size: 18, color: Colors.orange)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF0F172A))),
+          ),
+          GestureDetector(
+            onTap: onDecline,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(8)),
+              child: const Text('Decline', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+            ),
+          ),
+          GestureDetector(
+            onTap: onAccept,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: const Color(0xFF57068C), borderRadius: BorderRadius.circular(8)),
+              child: const Text('Accept', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

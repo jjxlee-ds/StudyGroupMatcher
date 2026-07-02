@@ -51,7 +51,9 @@ class StudyGroupService {
   static Future<void> join(String groupId) async {
     final response = await ApiClient.post('/study-groups/$groupId/join', body: {});
     if (response.statusCode != 201) {
-      throw Exception('Failed to join study group');
+      final body = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
+      final detail = body['detail'] as String? ?? 'Failed to join study group';
+      throw Exception(detail);
     }
   }
 
@@ -60,5 +62,27 @@ class StudyGroupService {
     if (response.statusCode != 204) {
       throw Exception('Failed to leave study group');
     }
+  }
+
+  /// Returns a map of user_id → name for all members of a group.
+  static Future<Map<String, String>> getMemberNames(String groupId) async {
+    try {
+      final response = await ApiClient.get('/study-groups/$groupId/members');
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        final map = <String, String>{};
+        for (final m in data) {
+          final userId = m['user_id'];
+          final name = m['name'];
+          if (userId is String && userId.isNotEmpty) {
+            map[userId] = (name is String && name.isNotEmpty) ? name : 'Member';
+          }
+        }
+        return map;
+      }
+    } catch (e) {
+      throw Exception('Failed to load group members: $e');
+    }
+    return {};
   }
 }

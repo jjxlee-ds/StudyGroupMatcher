@@ -324,7 +324,8 @@ async def get_study_groups_by_course(
 async def request_join_study_group(
     group_id: str,
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ):
     """스터디 그룹 참가 신청. 방장이 수락해야 최종 합류."""
     group = get_group_or_404(supabase, group_id)
@@ -371,7 +372,7 @@ async def request_join_study_group(
             detail="Study group is full",
         )
 
-    supabase.table("group_join_requests").insert({
+    supabase_admin.table("group_join_requests").insert({
         "user_id": current_user["id"],
         "study_group_id": group_id,
         "status": "pending",
@@ -639,13 +640,13 @@ async def accept_join_request(
 
     applicant_id = req_result.data[0]["user_id"]
 
-    supabase.table("user_study_groups").insert({
+    supabase_admin.table("user_study_groups").insert({
         "user_id": applicant_id,
         "study_group_id": group_id,
         "role": "member",
     }).execute()
 
-    supabase.table("group_join_requests").update(
+    supabase_admin.table("group_join_requests").update(
         {"status": "accepted"}
     ).eq("id", request_id).execute()
 
@@ -680,13 +681,14 @@ async def decline_join_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
+    supabase_admin: Client = Depends(get_supabase_admin),
 ):
     """(방장 전용) 참가 신청 거절."""
     get_group_or_404(supabase, group_id)
     assert_group_admin(supabase, group_id, current_user["id"])
 
     result = (
-        supabase.table("group_join_requests")
+        supabase_admin.table("group_join_requests")
         .update({"status": "declined"})
         .eq("id", request_id)
         .eq("study_group_id", group_id)

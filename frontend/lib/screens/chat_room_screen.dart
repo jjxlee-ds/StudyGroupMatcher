@@ -1688,9 +1688,23 @@ class _GroupInfoPanelState extends State<_GroupInfoPanel> {
 
   Future<void> _handleRequest(String requestId, String action) async {
     try {
-      await ApiClient.post('/study-groups/${widget.groupId}/requests/$requestId/$action', body: {});
-      _loadRequests();
-    } catch (_) {}
+      final response = await ApiClient.post('/study-groups/${widget.groupId}/requests/$requestId/$action', body: {});
+      if (response.statusCode == 200) {
+        _loadRequests();
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed: ${response.statusCode}'), backgroundColor: const Color(0xFFDC2626)),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: const Color(0xFFDC2626)),
+        );
+      }
+    }
   }
 
   @override
@@ -1775,8 +1789,8 @@ class _GroupInfoPanelState extends State<_GroupInfoPanel> {
                           : Column(
                               children: _pendingRequests.map((req) => _RequestRow(
                                 request: req,
-                                onAccept: () => _handleRequest(req['id'], 'approve'),
-                                onDecline: () => _handleRequest(req['id'], 'reject'),
+                                onAccept: () => _handleRequest(req['id'], 'accept'),
+                                onDecline: () => _handleRequest(req['id'], 'decline'),
                               )).toList(),
                             ),
                 ],

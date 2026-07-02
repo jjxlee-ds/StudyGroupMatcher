@@ -625,7 +625,7 @@ async def accept_join_request(
     assert_group_admin(supabase, group_id, current_user["id"])
 
     req_result = (
-        supabase.table("group_join_requests")
+        supabase_admin.table("group_join_requests")
         .select("*")
         .eq("id", request_id)
         .eq("study_group_id", group_id)
